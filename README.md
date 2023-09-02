@@ -1,5 +1,5 @@
 # Mikaey's Flash Stress Test
-A program to stress test flash media to the point of failure -- and possibly beyond.  It was inspired by `f3probe` by Michel Machado and `stressdisk` by Nick Craig-Wood and is designed to be a program that combines the functionality of both of them (while improving on shortcomings with both of them).  It focuses primarily on SD media, but I don't see any reason why it couldn't be used for other types of media, like USB or NVMe flash drives...or even mechanical drives.
+A program to stress test flash media to the point of failure -- and possibly beyond.  It was inspired by [`f3probe` by Michel Machado](https://github.com/AltraMayor/f3) and [`stressdisk` by Nick Craig-Wood](https://github.com/ncw/stressdisk) and is designed to be a program that combines the functionality of both of them (while improving on shortcomings with both of them).  It focuses primarily on SD media, but I don't see any reason why it couldn't be used for other types of media, like USB or NVMe flash drives...or even mechanical drives.
 
 This program will:
 * Attempt to detect whether a storage device is fake flash and determine the true size of the device
