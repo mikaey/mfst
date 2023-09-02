@@ -48,6 +48,8 @@ For the random read and random write tests, the program picks a random location 
 ### Stress Test
 Finally, the program moves onto the last -- and longest -- test, the stress test.  The idea is fairly simple: we overwrite the entire device with pseudorandom data, then read it back to see if it matches.  Then, we repeat this process until either (a) some error prevents us from doing anything else with the device, or (b) 50% of the sectors on the device have failed verification.
 
+During each pass, the device is broken up into 16 (hopefully) equal pieces.  The order of the pieces is randomized, and the program writes each piece in that random order.  The order of the pieces is randomized again before reading the data back.  This is done to minimize the possibility that any particular portion of the device is being held in the device's write cache when being read back.
+
 Flash devices vary in how they handle failing sectors.  Some will set themselves to be read-only.  Some will disable themselves entirely.  Some might pretend like nothing is wrong and simply return wrong data.  (Most devices have some extra space set aside for this inevitability -- and will start silently swapping in parts of that space for any sectors that have failed -- but we're concerned with what the device does once it has exhausted this extra space.)  If a device is falls into this last category, then the program will keep testing the device even after it starts finding bad sectors on the device.  It will keep going until at least half of the sectors on the device have been flagged as "bad".  Once it hits that point, it will show you:
 * How many read/write cycles were completed before the first failure appeared
 * How many read/write cycles were completed before 10% of the sectors on the device failed
@@ -80,3 +82,4 @@ Usually this test isn't necessary because the kernel will tell us the maximum nu
 ## Things I Want To Do
 * Read CID/CSD (if available) and print it to the log.  Possibly decode both of them as well.
 * Support hot removal/re-add of devices if they get disconnected.
+* Add detection for wraparound flash.  I haven't seen any of these yet, so I don't know exactly how they work.
