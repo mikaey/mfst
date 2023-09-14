@@ -397,7 +397,7 @@ void mark_sectors_read(size_t start_sector, size_t end_sector) {;
  * @param sector_num  The sector number of the sector to be marked as bad.
  */
 void mark_sector_bad(size_t sector_num) {
-    if(sector_display.sector_map[sector_num] & 0x01) {
+    if(!(sector_display.sector_map[sector_num] & 0x01)) {
         device_stats.num_bad_sectors++;
     }
 
