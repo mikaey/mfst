@@ -425,8 +425,6 @@ char is_sector_bad(size_t sector_num) {
  * the display parameters are still recomputed.
  */
 void redraw_sector_map() {
-    size_t sectors_in_last_line;
-
     if(program_options.no_curses) {
         return;
     }
@@ -2230,7 +2228,6 @@ int main(int argc, char **argv) {
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block;
     size_t cur_slice, j;
     ssize_t first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round;
-    struct stat device_stat;
     int *read_order;
     char str[192];
     struct timeval stats_cur_time;
@@ -2531,7 +2528,7 @@ int main(int argc, char **argv) {
     log_log(str);
     snprintf(str, sizeof(str), "  Total sectors (derived)  : %'lu", device_stats.num_sectors);
     log_log(str);
-    snprintf(str, sizeof(str), "  Preferred block size     : %'lu bytes", device_stat.st_blksize);
+    snprintf(str, sizeof(str), "  Preferred block size     : %'lu bytes", fs.st_blksize);
     log_log(str);
     snprintf(str, sizeof(str), "  Max sectors per request  : %'hu", max_sectors_per_request);
     log_log(str);
