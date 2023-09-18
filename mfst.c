@@ -67,7 +67,6 @@ struct random_data random_state;
 char random_number_state_buf[256];
 char speed_qualifications_shown;
 char ncurses_active;
-int lockfile_fd;
 ssize_t num_rounds;
 int is_writing;
 
@@ -114,7 +113,8 @@ struct {
 struct {
     FILE *log_file;
     FILE *stats_file;
-} log_file_handles;
+    int lockfile_fd;
+} file_handles;
 
 struct {
     size_t sectors_per_block;
@@ -152,7 +152,7 @@ time_t timediff(struct timeval start_time, struct timeval end_time) {
  * @returns Zero if the lockfile is not locked, or non-zero if it is.
  */
 int is_lockfile_locked() {
-    int retval = lockf(lockfile_fd, F_TEST, 0);
+    int retval = lockf(file_handles.lockfile_fd, F_TEST, 0);
     return (retval == -1 && (errno == EACCES || errno == EAGAIN));
 }
 
@@ -163,7 +163,7 @@ int is_lockfile_locked() {
  *          not.
  */
 int lock_lockfile() {
-    return lockf(lockfile_fd, F_TLOCK, 0);
+    return lockf(file_handles.lockfile_fd, F_TLOCK, 0);
 }
 
 /**
@@ -173,7 +173,7 @@ int lock_lockfile() {
  *          was not.
  */
 int unlock_lockfile() {
-    return lockf(lockfile_fd, F_ULOCK, 0);
+    return lockf(file_handles.lockfile_fd, F_ULOCK, 0);
 }
 
 /**
@@ -188,9 +188,9 @@ void log_log(char *msg) {
     char *t = ctime(&now);
     // Get rid of the newline on the end of the time
     t[strlen(t) - 1] = 0;
-    if(log_file_handles.log_file) {
-        fprintf(log_file_handles.log_file, "[%s] %s\n", t, msg);
-        fflush(log_file_handles.log_file);
+    if(file_handles.log_file) {
+        fprintf(file_handles.log_file, "[%s] %s\n", t, msg);
+        fflush(file_handles.log_file);
     }
 
     if(program_options.no_curses) {
@@ -239,7 +239,7 @@ void stats_log(size_t rounds, size_t bytes_written, size_t bytes_read, size_t ba
 
     assert(!gettimeofday(&micronow, NULL));
 
-    if(!log_file_handles.stats_file) {
+    if(!file_handles.stats_file) {
         return;
     }
 
@@ -251,10 +251,10 @@ void stats_log(size_t rounds, size_t bytes_written, size_t bytes_read, size_t ba
     read_rate = ((double)(bytes_read - stress_test_stats.previous_bytes_read)) / (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 1000000);
     bad_sector_rate = ((double)(bad_sectors - stress_test_stats.previous_bad_sectors)) / (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 60000000);
 
-    fprintf(log_file_handles.stats_file, "%s,%lu,%lu,%lu,%0.2f,%lu,%lu,%0.2f,%lu,%lu,%0.2f\n", ctime_str, rounds,
+    fprintf(file_handles.stats_file, "%s,%lu,%lu,%lu,%0.2f,%lu,%lu,%0.2f,%lu,%lu,%0.2f\n", ctime_str, rounds,
         bytes_written - stress_test_stats.previous_bytes_written, bytes_written, write_rate, bytes_read - stress_test_stats.previous_bytes_read, bytes_read,
         read_rate, bad_sectors, device_stats.num_bad_sectors, bad_sector_rate);
-    fflush(log_file_handles.stats_file);
+    fflush(file_handles.stats_file);
 
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
     stress_test_stats.previous_bytes_written = bytes_written;
@@ -2239,13 +2239,13 @@ int main(int argc, char **argv) {
     // Set things up so that cleanup() works properly
     sector_display.sector_map = NULL;
     fd = -1;
-    log_file_handles.log_file = NULL;
-    log_file_handles.stats_file = NULL;
+    file_handles.log_file = NULL;
+    file_handles.stats_file = NULL;
     ncurses_active = 0;
     buf = NULL;
     compare_buf = NULL;
     read_order = NULL;
-    lockfile_fd = -1;
+    file_handles.lockfile_fd = -1;
     program_options.lock_file = NULL;
     is_writing = -1;
 
@@ -2255,16 +2255,16 @@ int main(int argc, char **argv) {
             close(fd);
         }
 
-        if(lockfile_fd != -1) {
-            close(lockfile_fd);
+        if(file_handles.lockfile_fd != -1) {
+            close(file_handles.lockfile_fd);
         }
 
-        if(log_file_handles.log_file) {
-            fclose(log_file_handles.log_file);
+        if(file_handles.log_file) {
+            fclose(file_handles.log_file);
         }
 
-        if(log_file_handles.stats_file) {
-            fclose(log_file_handles.stats_file);
+        if(file_handles.stats_file) {
+            fclose(file_handles.stats_file);
         }
 
         if(ncurses_active) {
@@ -2359,8 +2359,8 @@ int main(int argc, char **argv) {
     }
 
     if(program_options.log_file) {
-        log_file_handles.log_file = fopen(program_options.log_file, "a");
-        if(!log_file_handles.log_file) {
+        file_handles.log_file = fopen(program_options.log_file, "a");
+        if(!file_handles.log_file) {
             if(!program_options.no_curses) {
                 local_errno = errno;
                 snprintf(str, sizeof(str), "Unable to open log file %s:", program_options.log_file);
@@ -2380,7 +2380,7 @@ int main(int argc, char **argv) {
 
     log_log("Program started.");
 
-    if((lockfile_fd = open(program_options.lock_file, O_WRONLY | O_CREAT)) == -1) {
+    if((file_handles.lockfile_fd = open(program_options.lock_file, O_WRONLY | O_CREAT)) == -1) {
         local_errno = errno;
         snprintf(str, sizeof(str), "Unable to open lock file %s: %s", program_options.lock_file, strerror(local_errno));
         log_log(str);
@@ -2397,8 +2397,8 @@ int main(int argc, char **argv) {
     }
 
     if(program_options.stats_file) {
-        log_file_handles.stats_file = fopen(program_options.stats_file, "a");
-        if(!log_file_handles.stats_file) {
+        file_handles.stats_file = fopen(program_options.stats_file, "a");
+        if(!file_handles.stats_file) {
             local_errno = errno;
             snprintf(str, sizeof(str), "Unable to open stats file %s: %s", program_options.stats_file, strerror(local_errno));
             log_log(str);
@@ -2418,9 +2418,9 @@ int main(int argc, char **argv) {
         log_log(str);
 
         // Write the CSV headers out to the file
-        fprintf(log_file_handles.stats_file,
+        fprintf(file_handles.stats_file,
             "Date/Time,Rounds Completed,Bytes Written,Total Bytes Written,Write Rate (bytes/sec),Bytes Read,Total Bytes Read,Read Rate (bytes/sec),Bad Sectors,Total Bad Sesctors,Bad Sector Rate (counts/min)\n");
-        fflush(log_file_handles.stats_file);
+        fflush(file_handles.stats_file);
     }
 
     // Does the system have a working gettimeofday?
