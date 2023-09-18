@@ -493,6 +493,12 @@ int32_t get_random_number() {
     }
 
     random_r(&random_state, &result);
+
+    // random() and random_r() generate random numbers between 0 and
+    // 0x7FFFFFFF -- which means we're not testing 1 out of every 32 bits on
+    // the device if we just accept this value.  To spice things up a little,
+    // we'll throw some extra randomness into the top bit.
+    result |= ((current_seed & result & 0x00000001) | (~(current_seed & (result >> 1)) & 0x00000001)) << 31;
     random_calls++;
     return result;
 }
@@ -1441,7 +1447,7 @@ size_t probe_device_size(int fd, size_t num_sectors, size_t optimal_block_size) 
     high = num_sectors / 8;
 
     for(i = 1; i < (num_slices - 1); i++) {
-        initial_sectors[i] = low + (get_random_number() % (high - low));
+        initial_sectors[i] = low + ((get_random_number() & RAND_MAX) % (high - low));
         low = (num_sectors / (num_slices - 1)) * i;
         
         if((initial_sectors[i] + (slice_size / device_stats.sector_size)) > low) {
@@ -1803,7 +1809,7 @@ int probe_device_speeds(int fd, size_t num_sectors, size_t optimal_write_block_s
                 while(bytes_left && secs < 30) {
                     handle_key_inputs(window);
                     if(rd) {
-                        cur = ((((size_t) get_random_number()) << 32) | get_random_number()) % num_sectors;
+                        cur = ((((size_t) get_random_number()) << 32) | (get_random_number() & 0x7FFFFFFFFFFFFFFF)) % num_sectors;
                         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
                             erase_and_delete_window(window);
                             lseek_error_during_speed_test();
@@ -1945,7 +1951,7 @@ int *random_list() {
 
     for(i = 0; i < 16; i++) {
         // Pick a new number and add it to the list
-        j = get_random_number() % (16 - i);
+        j = (get_random_number() & RAND_MAX) % (16 - i);
         list[i] = source[j];
 
         // Remove the item from the list
