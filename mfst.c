@@ -2227,7 +2227,7 @@ int main(int argc, char **argv) {
     int fd, block_size, cur_block_size, local_errno;
     struct stat fs;
     size_t bytes_left_to_write, ret, cur_sector, total_bytes_written, total_bytes_read;
-    unsigned int sectors_per_block, physical_sector_size;
+    unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf;
     struct timeval speed_start_time;
@@ -2503,7 +2503,7 @@ int main(int argc, char **argv) {
 
 
     if(ioctl(fd, BLKGETSIZE64, &device_stats.reported_size_bytes) || ioctl(fd, BLKSSZGET, &device_stats.sector_size) ||
-        ioctl(fd, BLKSECTGET, &max_sectors_per_request) || ioctl(fd, BLKPBSZGET, &physical_sector_size)) {
+        ioctl(fd, BLKSECTGET, &max_sectors_per_request)) {
         local_errno = errno;
         snprintf(str, sizeof(str), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(local_errno));
         log_log(str);
@@ -2528,9 +2528,7 @@ int main(int argc, char **argv) {
     log_log("Device info reported by kernel:");
     snprintf(str, sizeof(str), "  Reported size            : %'lu bytes", device_stats.reported_size_bytes);
     log_log(str);
-    snprintf(str, sizeof(str), "  Sector size (logical)    : %'u bytes", device_stats.sector_size);
-    log_log(str);
-    snprintf(str, sizeof(str), "  Sector size (physical)   : %'u bytes", physical_sector_size);
+    snprintf(str, sizeof(str), "  Sector size              : %'u bytes", device_stats.sector_size);
     log_log(str);
     snprintf(str, sizeof(str), "  Total sectors (derived)  : %'lu", device_stats.num_sectors);
     log_log(str);
