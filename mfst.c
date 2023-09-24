@@ -1301,7 +1301,7 @@ int probe_for_optimal_block_size(int fd) {
 }
 
 struct timeval last_update_time;
-void print_status_update(size_t cur_sector, size_t num_rounds, char is_writing) {
+void print_status_update(size_t cur_sector, size_t num_rounds) {
     struct timeval cur_time;
     double rate;
     double secs_since_last_update;
