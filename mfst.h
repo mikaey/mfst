@@ -36,8 +36,8 @@
 #define PROGRAM_NAME_LABEL_X 2
 
 // The coordinates of the "Device:" label
-#define DEVICE_NAME_Y 0
-#define DEVICE_NAME_X (strlen(PROGRAM_NAME) + 4)
+#define DEVICE_NAME_LABEL_Y 0
+#define DEVICE_NAME_LABEL_X (strlen(PROGRAM_NAME) + 4)
 
 // The coordinates of the "Device Size:" label
 #define DEVICE_SIZE_LABEL_Y (LINES - 6)
@@ -162,6 +162,10 @@
 // The coordinates of the "A2:" label
 #define SPEED_A2_LABEL_Y 23
 #define SPEED_A2_LABEL_X (COLS - 35)
+
+// The coordinates of the device name display
+#define DEVICE_NAME_DISPLAY_Y 0
+#define DEVICE_NAME_DISPLAY_X (strlen(PROGRAM_NAME) + 13)
 
 // The coordinates of the "Reading"/"Writing" status text
 #define READWRITE_DISPLAY_Y 0

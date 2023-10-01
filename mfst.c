@@ -670,11 +670,12 @@ void redraw_screen() {
         mvaddstr(SEQUENTIAL_WRITE_SPEED_LABEL_Y, SEQUENTIAL_WRITE_SPEED_LABEL_X, "Sequential write:");
         mvaddstr(RANDOM_READ_SPEED_LABEL_Y     , RANDOM_READ_SPEED_LABEL_X     , "Random read     :");
         mvaddstr(RANDOM_WRITE_SPEED_LABEL_Y    , RANDOM_WRITE_SPEED_LABEL_X    , "Random write    :");
+	mvaddstr(DEVICE_NAME_LABEL_Y           , DEVICE_NAME_LABEL_X           , " Device: "        );
         attroff(A_BOLD);
 
         // Draw the device name
-        snprintf(str, 23, " Device: %s ", program_options.device_name);
-        mvaddstr(DEVICE_NAME_Y, DEVICE_NAME_X, str);
+        snprintf(str, 23, "%s ", program_options.device_name);
+        mvaddstr(DEVICE_NAME_DISPLAY_Y, DEVICE_NAME_DISPLAY_X, str);
 
         // Draw the color key for the right side of the screen
         attron(COLOR_PAIR(BLACK_ON_WHITE));
