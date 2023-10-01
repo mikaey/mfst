@@ -405,7 +405,7 @@ void redraw_sector_map() {
     }
 
     if(sector_display.sectors_per_block) {
-        mvprintw(BYTES_PER_BLOCK_Y, BYTES_PER_BLOCK_X, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
+        mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
     }
 
     if(!sector_display.sector_map) {
@@ -664,7 +664,7 @@ void redraw_screen() {
         mvaddstr(LINES - 6, 2, "Device size:");
         mvaddstr(LINES - 5, 4, "Reported     :");
         mvaddstr(LINES - 4, 4, "Detected     :");
-        mvaddstr(IS_FAKE_FLASH_Y, 4, "Is fake flash:");
+        mvaddstr(IS_FAKE_FLASH_DISPLAY_Y, 4, "Is fake flash:");
         mvaddstr(LINES - 6, 50, "Device speeds:");
         mvaddstr(LINES - 5, 52, "Sequential read :");
         mvaddstr(LINES - 4, 52, "Sequential write:");
@@ -719,11 +719,11 @@ void redraw_screen() {
 
         if(device_stats.is_fake_flash == FAKE_FLASH_YES) {
             attron(COLOR_PAIR(RED_ON_BLACK));
-            mvaddstr(IS_FAKE_FLASH_Y, IS_FAKE_FLASH_X, "Yes");
+            mvaddstr(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Yes");
             attroff(COLOR_PAIR(RED_ON_BLACK));
         } else if(device_stats.is_fake_flash == FAKE_FLASH_NO) {
             attron(COLOR_PAIR(GREEN_ON_BLACK));
-            mvaddstr(IS_FAKE_FLASH_Y, IS_FAKE_FLASH_X, "Probably not");
+            mvaddstr(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Probably not");
             attroff(COLOR_PAIR(GREEN_ON_BLACK));
         }
 
@@ -2525,7 +2525,7 @@ int main(int argc, char **argv) {
         log_log(str);
         if(!program_options.no_curses) {
             mvaddstr(LINES - 4, 19, "Unknown");
-            mvaddstr(IS_FAKE_FLASH_Y, IS_FAKE_FLASH_X, "Unknown");
+            mvaddstr(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Unknown");
         }
     } else {
         device_stats.num_sectors = device_stats.detected_size_bytes / device_stats.sector_size;
@@ -2539,11 +2539,11 @@ int main(int argc, char **argv) {
             mvprintw(LINES - 4, 19, "%'lu bytes", device_stats.detected_size_bytes);
             if(device_stats.detected_size_bytes != device_stats.reported_size_bytes) {
                 attron(COLOR_PAIR(RED_ON_BLACK));
-                mvprintw(IS_FAKE_FLASH_Y, IS_FAKE_FLASH_X, "Yes");
+                mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Yes");
                 attroff(COLOR_PAIR(RED_ON_BLACK));
             } else {
                 attron(COLOR_PAIR(GREEN_ON_BLACK));
-                mvprintw(IS_FAKE_FLASH_Y, IS_FAKE_FLASH_X, "Probably not");
+                mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Probably not");
                 attroff(COLOR_PAIR(GREEN_ON_BLACK));
             }
         }

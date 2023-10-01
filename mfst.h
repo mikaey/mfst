@@ -38,8 +38,8 @@
 #define BLOCK_SIZE_DISPLAY_X (COLS - 33)
 
 // The coordinates of where to print the "Is fake flash" result
-#define IS_FAKE_FLASH_Y (LINES - 3)
-#define IS_FAKE_FLASH_X 19
+#define IS_FAKE_FLASH_DISPLAY_Y (LINES - 3)
+#define IS_FAKE_FLASH_DISPLAY_X 19
 
 #endif
 
