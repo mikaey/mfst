@@ -547,101 +547,101 @@ void print_with_color(int y, int x, int color, const char *str) {
 void print_class_marking_qualifications() {
     if(speed_qualifications_shown && !program_options.no_curses) {
         attron(A_BOLD);
-        mvaddstr(7, COLS - 37, "Speed Class Qualifications:");
-        mvaddstr(8, COLS - 35, "Class 2 :");
-        mvaddstr(9, COLS - 35, "Class 4 :");
-        mvaddstr(10, COLS - 35, "Class 6 :");
-        mvaddstr(11, COLS - 35, "Class 10:");
-        mvaddstr(13, COLS - 35, "U1      :");
-        mvaddstr(14, COLS - 35, "U3      :");
-        mvaddstr(16, COLS - 35, "V6      :");
-        mvaddstr(17, COLS - 35, "V10     :");
-        mvaddstr(18, COLS - 35, "V30     :");
-        mvaddstr(19, COLS - 35, "V60     :");
-        mvaddstr(20, COLS - 35, "V90     :");
-        mvaddstr(22, COLS - 35, "A1      :");
-        mvaddstr(23, COLS - 35, "A2      :");
+        mvaddstr(SPEED_CLASS_QUALIFICATIONS_LABEL_Y, SPEED_CLASS_QUALIFICATIONS_LABEL_X, "Speed Class Qualifications:");
+        mvaddstr(SPEED_CLASS_2_LABEL_Y , SPEED_CLASS_2_LABEL_X , "Class 2 :");
+        mvaddstr(SPEED_CLASS_4_LABEL_Y , SPEED_CLASS_4_LABEL_X , "Class 4 :");
+        mvaddstr(SPEED_CLASS_6_LABEL_Y , SPEED_CLASS_6_LABEL_X , "Class 6 :");
+        mvaddstr(SPEED_CLASS_10_LABEL_Y, SPEED_CLASS_10_LABEL_X, "Class 10:");
+        mvaddstr(SPEED_U1_LABEL_Y      , SPEED_U1_LABEL_X      , "U1      :");
+        mvaddstr(SPEED_U3_LABEL_Y      , SPEED_U3_LABEL_X      , "U3      :");
+        mvaddstr(SPEED_V6_LABEL_Y      , SPEED_V6_LABEL_X      , "V6      :");
+        mvaddstr(SPEED_V10_LABEL_Y     , SPEED_V10_LABEL_X     , "V10     :");
+        mvaddstr(SPEED_V30_LABEL_Y     , SPEED_V30_LABEL_X     , "V30     :");
+        mvaddstr(SPEED_V60_LABEL_Y     , SPEED_V60_LABEL_X     , "V60     :");
+        mvaddstr(SPEED_V90_LABEL_Y     , SPEED_V90_LABEL_X     , "V90     :");
+        mvaddstr(SPEED_A1_LABEL_Y      , SPEED_A1_LABEL_X      , "A1      :");
+        mvaddstr(SPEED_A2_LABEL_Y      , SPEED_A2_LABEL_X      , "A2      :");
         attroff(A_BOLD);
         
         if(device_speeds.sequential_write_speed) {
             if(device_speeds.sequential_write_speed >= 2097152) {
-                print_with_color(8, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_CLASS_2_RESULT_Y, SPEED_CLASS_2_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(8, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_CLASS_2_RESULT_Y, SPEED_CLASS_2_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.sequential_write_speed >= 4194304) {
-                print_with_color(9, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_CLASS_4_RESULT_Y, SPEED_CLASS_4_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(9, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_CLASS_4_RESULT_Y, SPEED_CLASS_4_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.sequential_write_speed >= 6291456) {
-                print_with_color(10, COLS - 25, GREEN_ON_BLACK, "Yes    ");
-                print_with_color(16, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_CLASS_6_RESULT_Y, SPEED_CLASS_6_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V6_RESULT_Y     , SPEED_V6_RESULT_X     , GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(10, COLS - 25, RED_ON_BLACK, "No     ");
-                print_with_color(16, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_CLASS_6_RESULT_Y, SPEED_CLASS_6_RESULT_X, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V6_RESULT_Y     , SPEED_V6_RESULT_X     , RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.sequential_write_speed >= 10485760) {
-                print_with_color(11, COLS - 25, GREEN_ON_BLACK, "Yes    ");
-                print_with_color(13, COLS - 25, GREEN_ON_BLACK, "Yes    ");
-                print_with_color(17, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(11, COLS - 25, RED_ON_BLACK, "No     ");
-                print_with_color(13, COLS - 25, RED_ON_BLACK, "No     ");
-                print_with_color(17, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.sequential_write_speed >= 31457280) {
-                print_with_color(14, COLS - 25, GREEN_ON_BLACK, "Yes    ");
-                print_with_color(18, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_U3_RESULT_Y , SPEED_U3_RESULT_X , GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V30_RESULT_Y, SPEED_V30_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(14, COLS - 25, RED_ON_BLACK, "No     ");
-                print_with_color(18, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_U3_RESULT_Y , SPEED_U3_RESULT_X , RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V30_RESULT_Y, SPEED_V30_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.sequential_write_speed >= 62914560) {
-                print_with_color(19, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V60_RESULT_Y, SPEED_V60_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(19, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V60_RESULT_Y, SPEED_V60_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.sequential_write_speed >= 94371840) {
-                print_with_color(20, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V90_RESULT_Y, SPEED_V90_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(20, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V90_RESULT_Y, SPEED_V90_RESULT_X, RED_ON_BLACK, "No     ");
             }
         } else {
-            mvaddstr(8, COLS - 25, "Unknown");
-            mvaddstr(9, COLS - 25, "Unknown");
-            mvaddstr(10, COLS - 25, "Unknown");
-            mvaddstr(11, COLS - 25, "Unknown");
-            mvaddstr(13, COLS - 25, "Unknown");
-            mvaddstr(14, COLS - 25, "Unknown");
-            mvaddstr(16, COLS - 25, "Unknown");
-            mvaddstr(17, COLS - 25, "Unknown");
-            mvaddstr(18, COLS - 25, "Unknown");
-            mvaddstr(19, COLS - 25, "Unknown");
-            mvaddstr(20, COLS - 25, "Unknown");
+            mvaddstr(SPEED_CLASS_2_RESULT_Y , SPEED_CLASS_2_RESULT_X , "Unknown");
+            mvaddstr(SPEED_CLASS_4_RESULT_Y , SPEED_CLASS_4_RESULT_X , "Unknown");
+            mvaddstr(SPEED_CLASS_6_RESULT_Y , SPEED_CLASS_6_RESULT_X , "Unknown");
+            mvaddstr(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, "Unknown");
+            mvaddstr(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , "Unknown");
+            mvaddstr(SPEED_U3_RESULT_Y      , SPEED_U3_RESULT_X      , "Unknown");
+            mvaddstr(SPEED_V6_RESULT_Y      , SPEED_V6_RESULT_X      , "Unknown");
+            mvaddstr(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , "Unknown");
+            mvaddstr(SPEED_V30_RESULT_Y     , SPEED_V30_RESULT_X     , "Unknown");
+            mvaddstr(SPEED_V60_RESULT_Y     , SPEED_V60_RESULT_X     , "Unknown");
+            mvaddstr(SPEED_V90_RESULT_Y     , SPEED_V90_RESULT_X     , "Unknown");
         }
 
         if(device_speeds.random_read_iops && device_speeds.random_write_iops) {
             if(device_speeds.random_read_iops >= 2000 && device_speeds.random_write_iops >= 500) {
-                print_with_color(22, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_A1_RESULT_Y, SPEED_A1_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(22, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_A1_RESULT_Y, SPEED_A1_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
             if(device_speeds.random_read_iops >= 4000 && device_speeds.random_write_iops >= 2000) {
-                print_with_color(23, COLS - 25, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
-                print_with_color(23, COLS - 25, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, RED_ON_BLACK, "No     ");
             }
         } else {
-            mvaddstr(22, COLS - 25, "Unknown");
-            mvaddstr(23, COLS - 25, "Unknown");
+            mvaddstr(SPEED_A1_RESULT_Y, SPEED_A2_RESULT_X, "Unknown");
+            mvaddstr(SPEED_A1_RESULT_Y, SPEED_A2_RESULT_X, "Unknown");
         }
     }
 }
@@ -660,61 +660,65 @@ void redraw_screen() {
 
         // Draw the labels for the bottom of the screen
         attron(A_BOLD);
-        mvaddstr(0, 2, PROGRAM_NAME);
-        mvaddstr(LINES - 6, 2, "Device size:");
-        mvaddstr(LINES - 5, 4, "Reported     :");
-        mvaddstr(LINES - 4, 4, "Detected     :");
-        mvaddstr(IS_FAKE_FLASH_DISPLAY_Y, 4, "Is fake flash:");
-        mvaddstr(LINES - 6, 50, "Device speeds:");
-        mvaddstr(LINES - 5, 52, "Sequential read :");
-        mvaddstr(LINES - 4, 52, "Sequential write:");
-        mvaddstr(LINES - 3, 52, "Random read     :");
-        mvaddstr(LINES - 2, 52, "Random write    :");
+        mvaddstr(PROGRAM_NAME_LABEL_Y          , PROGRAM_NAME_LABEL_X          , PROGRAM_NAME       );
+        mvaddstr(DEVICE_SIZE_LABEL_Y           , DEVICE_SIZE_LABEL_X           , "Device size:"     );
+        mvaddstr(REPORTED_DEVICE_SIZE_LABEL_Y  , REPORTED_DEVICE_SIZE_LABEL_X  , "Reported     :"   );
+        mvaddstr(DETECTED_DEVICE_SIZE_LABEL_Y  , DETECTED_DEVICE_SIZE_LABEL_X  , "Detected     :"   );
+        mvaddstr(IS_FAKE_FLASH_LABEL_Y         , IS_FAKE_FLASH_LABEL_X         , "Is fake flash:"   );
+        mvaddstr(DEVICE_SPEEDS_LABEL_Y         , DEVICE_SPEEDS_LABEL_X         , "Device speeds:"   );
+        mvaddstr(SEQUENTIAL_READ_SPEED_LABEL_Y , SEQUENTIAL_READ_SPEED_LABEL_X , "Sequential read :");
+        mvaddstr(SEQUENTIAL_WRITE_SPEED_LABEL_Y, SEQUENTIAL_WRITE_SPEED_LABEL_X, "Sequential write:");
+        mvaddstr(RANDOM_READ_SPEED_LABEL_Y     , RANDOM_READ_SPEED_LABEL_X     , "Random read     :");
+        mvaddstr(RANDOM_WRITE_SPEED_LABEL_Y    , RANDOM_WRITE_SPEED_LABEL_X    , "Random write    :");
         attroff(A_BOLD);
 
         // Draw the device name
         snprintf(str, 23, " Device: %s ", program_options.device_name);
-        mvaddstr(0, strlen(PROGRAM_NAME) + 4, str);
+        mvaddstr(DEVICE_NAME_Y, DEVICE_NAME_X, str);
 
         // Draw the color key for the right side of the screen
         attron(COLOR_PAIR(BLACK_ON_WHITE));
-        mvaddstr(2, COLS - 37, " ");
+        mvaddstr(COLOR_KEY_BLOCK_SIZE_BLOCK_Y, COLOR_KEY_BLOCK_SIZE_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_WHITE));
+
         attron(COLOR_PAIR(BLACK_ON_BLUE));
-        mvaddstr(3, COLS - 37, " ");
+        mvaddstr(COLOR_KEY_WRITTEN_BLOCK_Y, COLOR_KEY_WRITTEN_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_BLUE));
+
         attron(COLOR_PAIR(BLACK_ON_GREEN));
-        mvaddstr(4, COLS - 37, " ");
+        mvaddstr(COLOR_KEY_VERIFIED_BLOCK_Y, COLOR_KEY_VERIFIED_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_GREEN));
+
         attron(COLOR_PAIR(BLACK_ON_RED));
-        mvaddstr(5, COLS - 37, " ");
+        mvaddstr(COLOR_KEY_FAILED_BLOCK_Y, COLOR_KEY_FAILED_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_RED));
-        mvaddstr(2, COLS - 35, "=");
-        mvaddstr(3, COLS - 35, "= Written");
-        mvaddstr(4, COLS - 35, "= Verified");
-        mvaddstr(5, COLS - 35, "= Failed");
+
+        mvaddstr(BLOCK_SIZE_LABEL_Y    , BLOCK_SIZE_LABEL_X    , "=");
+        mvaddstr(WRITTEN_BLOCK_LABEL_Y , WRITTEN_BLOCK_LABEL_X , "= Written");
+        mvaddstr(VERIFIED_BLOCK_LABEL_Y, VERIFIED_BLOCK_LABEL_X, "= Verified");
+        mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed");
 
         if(num_rounds != -1) {
             j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
-            mvaddstr(0, COLS - (j + 32), str);
+            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), str);
         }
 
         if(is_writing == 1) {
-            mvaddstr(0, COLS - 30, " Writing ");
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Writing ");
         } else if(is_writing == 0) {
-            mvaddstr(0, COLS - 30, " Reading ");
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Reading ");
         }
 
         // Draw the reported size of the device if it's been determined
         if(device_stats.reported_size_bytes) {
             snprintf(str, 26, "%'lu bytes", device_stats.reported_size_bytes);
-            mvprintw(LINES - 5, 19, "%-25s", str);
+            mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%-25s", str);
         }
 
         // Draw the detected size of the device if it's been determined
         if(device_stats.detected_size_bytes) {
             snprintf(str, 26, "%'lu bytes", device_stats.detected_size_bytes);
-            mvprintw(LINES - 4, 19, "%-25s", device_stats.detected_size_bytes ? str : "");
+            mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%-25s", device_stats.detected_size_bytes ? str : "");
         }
 
         if(device_stats.is_fake_flash == FAKE_FLASH_YES) {
@@ -728,23 +732,25 @@ void redraw_screen() {
         }
 
         if(sector_display.sectors_per_block) {
-            mvprintw(2, COLS - 33, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
+            mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
         }
 
         if(device_speeds.sequential_read_speed) {
-            mvaddstr(LINES - 5, 70, format_rate(device_speeds.sequential_read_speed, str, 31));
+            mvaddstr(SEQUENTIAL_READ_SPEED_DISPLAY_Y, SEQUENTIAL_READ_SPEED_DISPLAY_X, format_rate(device_speeds.sequential_read_speed, str, 31));
         }
 
         if(device_speeds.sequential_write_speed) {
-            mvaddstr(LINES - 4, 70, format_rate(device_speeds.sequential_write_speed, str, 31));
+            mvaddstr(SEQUENTIAL_WRITE_SPEED_DISPLAY_Y, SEQUENTIAL_WRITE_SPEED_DISPLAY_X, format_rate(device_speeds.sequential_write_speed, str, 31));
         }
 
         if(device_speeds.random_read_iops) {
-            mvprintw(LINES - 3, 70, "%0.2f IOPS/s (%s)", device_speeds.random_read_iops, format_rate(device_speeds.random_read_iops * 4096, rate, sizeof(rate)));
+            mvprintw(RANDOM_READ_SPEED_DISPLAY_Y, RANDOM_READ_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_speeds.random_read_iops,
+	        format_rate(device_speeds.random_read_iops * 4096, rate, sizeof(rate)));
         }
 
         if(device_speeds.random_write_iops) {
-            mvprintw(LINES - 2, 70, "%0.2f IOPS/s (%s)", device_speeds.random_write_iops, format_rate(device_speeds.random_write_iops * 4096, rate, sizeof(rate)));
+            mvprintw(RANDOM_WRITE_SPEED_DISPLAY_Y, RANDOM_WRITE_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_speeds.random_write_iops,
+		format_rate(device_speeds.random_write_iops * 4096, rate, sizeof(rate)));
         }
 
         if(device_speeds.sequential_read_speed != 0 || device_speeds.sequential_write_speed != 0 || device_speeds.random_read_iops != 0 ||
@@ -1286,7 +1292,7 @@ void print_status_update(size_t cur_sector, size_t num_rounds) {
 
     if(!program_options.no_curses) {
         format_rate(rate, str, sizeof(str));
-        mvprintw(0, COLS - 19, " %-15s", str);
+        mvprintw(STRESS_TEST_SPEED_DISPLAY_Y, STRESS_TEST_SPEED_DISPLAY_X, " %-15s", str);
     }
 
     assert(!gettimeofday(&last_update_time, NULL));
@@ -1812,10 +1818,14 @@ int probe_device_speeds(int fd, size_t num_sectors, size_t optimal_write_block_s
                         if((secs - prev_secs) >= 0.5) {
                             if(rd) {
                                 snprintf(str, sizeof(str), "%0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs, rate, sizeof(rate)));
-                                mvprintw((LINES - 3) + (wr ? 1 : 0), 70, "%-28s", str);
+                                mvprintw(
+				    wr ? RANDOM_WRITE_SPEED_DISPLAY_Y : RANDOM_READ_SPEED_DISPLAY_Y,
+				    wr ? RANDOM_WRITE_SPEED_DISPLAY_X : RANDOM_READ_SPEED_DISPLAY_X, "%-28s", str);
                             } else {
                                 snprintf(str, sizeof(str), "%s", format_rate(ctr / secs, rate, sizeof(rate)));
-                                mvprintw((LINES - 5) + (wr ? 1 : 0), 70, "%-28s", str);
+                                mvprintw(
+				    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_Y : SEQUENTIAL_READ_SPEED_DISPLAY_Y,
+				    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_X : SEQUENTIAL_READ_SPEED_DISPLAY_X, "%-28s", str);
                             }
 
                             refresh();
@@ -2499,7 +2509,7 @@ int main(int argc, char **argv) {
     log_log(str);
     snprintf(str, sizeof(str), "  Max sectors per request  : %'hu", max_sectors_per_request);
     log_log(str);
-    mvprintw(LINES - 5, 19, "%'lu bytes", device_stats.reported_size_bytes);
+    mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.reported_size_bytes);
     refresh();
 
     profile_random_number_generator();
@@ -2524,8 +2534,8 @@ int main(int argc, char **argv) {
         snprintf(str, sizeof(str), "Assuming that the kernel-reported device size (%'lu bytes) is correct.\n", device_stats.reported_size_bytes);
         log_log(str);
         if(!program_options.no_curses) {
-            mvaddstr(LINES - 4, 19, "Unknown");
-            mvaddstr(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Unknown");
+            mvaddstr(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "Unknown");
+            mvaddstr(IS_FAKE_FLASH_DISPLAY_Y       , IS_FAKE_FLASH_DISPLAY_X       , "Unknown");
         }
     } else {
         device_stats.num_sectors = device_stats.detected_size_bytes / device_stats.sector_size;
@@ -2536,7 +2546,7 @@ int main(int argc, char **argv) {
         }
 
         if(!program_options.no_curses) {
-            mvprintw(LINES - 4, 19, "%'lu bytes", device_stats.detected_size_bytes);
+            mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.detected_size_bytes);
             if(device_stats.detected_size_bytes != device_stats.reported_size_bytes) {
                 attron(COLOR_PAIR(RED_ON_BLACK));
                 mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Yes");
@@ -2647,8 +2657,8 @@ int main(int argc, char **argv) {
         is_writing = 1;
         if(!program_options.no_curses) {
             j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
-            mvaddstr(0, COLS - (j + 32), str);
-            mvaddstr(0, COLS - 30, " Writing ");
+            mvaddstr(ROUNDNUM_DISPLAY_Y , ROUNDNUM_DISPLAY_X(j), str);
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X  , " Writing ");
         }
 
         // Reset the sector map.
@@ -2725,7 +2735,7 @@ int main(int argc, char **argv) {
         sectors_read = 0;
         is_writing = 0;
         if(!program_options.no_curses) {
-            mvaddstr(0, COLS - 30, " Reading ");
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Reading ");
         }
 
         for(cur_slice = 0; cur_slice < 16; cur_slice++) {
