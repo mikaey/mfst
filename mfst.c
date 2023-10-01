@@ -2784,7 +2784,7 @@ int main(int argc, char **argv) {
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf;
     struct timeval speed_start_time;
-    size_t num_bad_sectors, sectors_read, cur_sectors_per_block;
+    size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
     size_t cur_slice, j;
     ssize_t first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round;
     int *read_order;
@@ -3292,13 +3292,18 @@ int main(int argc, char **argv) {
                 }
             }
 
-            for(cur_sector = get_slice_start(read_order[cur_slice]);
-                cur_sector < get_slice_start(read_order[cur_slice] + 1); cur_sector += cur_sectors_per_block) {
+            if(read_order[cur_slice] == 15) {
+                last_sector = device_stats.num_sectors;
+            } else {
+                last_sector = get_slice_start(read_order[cur_slice] + 1);
+            }
+
+            for(cur_sector = get_slice_start(read_order[cur_slice]); cur_sector < last_sector; cur_sector += cur_sectors_per_block) {
 
                 // Use bytes_left_to_write to hold the bytes left to read
-                if((cur_sector + sectors_per_block) > get_slice_start(read_order[cur_slice] + 1)) {
-                    cur_sectors_per_block = ((device_stats.num_sectors / 16) * (read_order[cur_slice] + 1)) - cur_sector;
-                    cur_block_size = cur_sectors_per_block * device_stats.sector_size;
+                if((cur_sector + sectors_per_block) > last_sector) {
+                    cur_sectors_per_block = last_sector - cur_sector;
+		    cur_block_size = cur_sectors_per_block * device_stats.sector_size;
                 } else {
                     cur_block_size = block_size;
                     cur_sectors_per_block = sectors_per_block;
@@ -3387,7 +3392,7 @@ int main(int argc, char **argv) {
 
             if(restart_slice) {
                 // Unmark the sectors we've written in this slice so far
-                for(j = get_slice_start(read_order[cur_slice]); j < get_slice_start(read_order[cur_slice] + 1); j++) {
+                for(j = get_slice_start(read_order[cur_slice]); j < last_sector; j++) {
                     sector_display.sector_map[j] &= 0x01;
                 }
 
@@ -3419,12 +3424,17 @@ int main(int argc, char **argv) {
                 return 0;
             }
 
-            for(cur_sector = get_slice_start(read_order[cur_slice]);
-                cur_sector < get_slice_start(read_order[cur_slice] + 1); cur_sector += cur_sectors_per_block) {
+            if(read_order[cur_slice] == 15) {
+                last_sector = device_stats.num_sectors;
+            } else {
+                last_sector = get_slice_start(read_order[cur_slice] + 1);
+            }
+
+            for(cur_sector = get_slice_start(read_order[cur_slice]); cur_sector < last_sector; cur_sector += cur_sectors_per_block) {
 
                 // Use bytes_left_to_write to hold the bytes left to read
-                if((cur_sector + sectors_per_block) > get_slice_start(read_order[cur_slice] + 1)) {
-                    cur_sectors_per_block = ((device_stats.num_sectors / 16) * (read_order[cur_slice] + 1)) - cur_sector;
+                if((cur_sector + sectors_per_block) > last_sector) {
+                    cur_sectors_per_block = last_sector - cur_sector;
                     cur_block_size = cur_sectors_per_block * device_stats.sector_size;
                 } else {
                     cur_block_size = block_size;
