@@ -386,6 +386,8 @@ char is_sector_bad(size_t sector_num) {
  * the display parameters are still recomputed.
  */
 void redraw_sector_map() {
+    size_t sectors_in_last_line;
+
     if(program_options.no_curses) {
         return;
     }
