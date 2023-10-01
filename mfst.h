@@ -34,8 +34,8 @@
 #define SECTOR_DISPLAY_X 2
 
 // The coordinates of where to display the bytes per block on screen.
-#define BYTES_PER_BLOCK_Y 2
-#define BYTES_PER_BLOCK_X (COLS - 33)
+#define BLOCK_SIZE_DISPLAY_Y 2
+#define BLOCK_SIZE_DISPLAY_X (COLS - 33)
 
 // The coordinates of where to print the "Is fake flash" result
 #define IS_FAKE_FLASH_Y (LINES - 3)
