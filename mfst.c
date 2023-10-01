@@ -2703,7 +2703,7 @@ int main(int argc, char **argv) {
                     device_stats.bytes_since_last_status_update += ret;
                     total_bytes_written += ret;
 
-                    print_status_update(cur_sector, num_rounds, 1);
+                    print_status_update(cur_sector, num_rounds);
                 }
 
 
@@ -2771,7 +2771,7 @@ int main(int argc, char **argv) {
                     device_stats.bytes_since_last_status_update += ret;
                     sectors_read += ret / device_stats.sector_size;
 
-                    print_status_update(sectors_read, num_rounds, 0);
+                    print_status_update(sectors_read, num_rounds);
                 }
 
                 mark_sectors_read(cur_sector, cur_sector + cur_sectors_per_block);
