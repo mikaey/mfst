@@ -7,6 +7,9 @@
 // Periodicity of the random() function (cccording to the man page)
 #define RANDOM_PERIOD 34359738352
 
+// Size of the beginning-of-device and middle-of-device buffers
+#define BOD_MOD_BUFFER_SIZE 1048576
+
 // Number of seconds to profile the RNG
 #define RNG_PROFILE_SECS 5
 

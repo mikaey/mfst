@@ -19,6 +19,7 @@
 #include <curses.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <libudev.h>
 #include "mfst.h"
 
 unsigned long random_calls;
@@ -33,6 +34,18 @@ int is_writing;
 
 const char *WARNING_TITLE = "WARNING";
 const char *ERROR_TITLE = "ERROR";
+
+// To handle device disconnects/reconnects, we're going to create a couple of
+// buffers where we hold the most recent 1MB of data that we wrote to the
+// beginning of the device (BOD) and middle of the device (MOD).  When a device
+// is reconnected, we'll read back those two segments.  One segment needs to be
+// a 100% match; we can be fuzzy about how much of the other segment matches.
+// I'm taking this approach in case we were in the middle of writing to one of
+// these two segments when the device was disconnected and we're not sure how
+// much of the data was actually committed (e.g., actually made it out of the
+// device's write cache and into permanent storage).
+char bod_buffer[BOD_MOD_BUFFER_SIZE];
+char mod_buffer[BOD_MOD_BUFFER_SIZE];
 
 struct {
     double sequential_write_speed;
@@ -56,6 +69,7 @@ struct {
     int sector_size;
     int preferred_block_size;
     int max_request_size;
+    dev_t device_num;
     FakeFlashEnum is_fake_flash;
 } device_stats;
 
@@ -93,6 +107,75 @@ struct {
     size_t previous_bytes_read;
     size_t previous_bad_sectors;
 } stress_test_stats;
+
+/**
+ * Tries to determine whether the device was disconnected from the system.
+ *
+ * @returns Non-zero if the device was disconnected from the system, or zero if
+ *          the device appears to still be present (or if an error occurred)
+ */
+int did_device_disconnect() {
+    const char *syspath, *device_size_str;
+    size_t device_size;
+    struct stat sysstat;
+    struct udev *udev_handle;
+    struct udev_device *udev_dev;
+
+    // We'll sleep for a bit first to make sure that an in-progress eject has
+    // time to complete.
+    if(program_options.no_curses) {
+        usleep(250000);
+    } else {
+        napms(250);
+    }
+
+    udev_handle = udev_new();
+    if(!udev_handle) {
+        return 0;
+    }
+
+    udev_dev = udev_device_new_from_devnum(udev_handle, 'b', device_stats.device_num);
+    if(!udev_dev) {
+        udev_unref(udev_handle);
+        return 1;
+    }
+
+    syspath = udev_device_get_syspath(udev_dev);
+    if(!syspath) {
+        udev_device_unref(udev_dev);
+        udev_unref(udev_handle);
+        return 1;
+    }
+
+    // Check to see if the path still exists
+    if(stat(syspath, &sysstat)) {
+        // Yeah, device went away...
+        udev_device_unref(udev_dev);
+        udev_unref(udev_handle);
+        return 1;
+    }
+
+    // Did the device's size change to 0?  (E.g., did the SD card get pulled
+    // out of the reader?)
+    device_size_str = udev_device_get_sysattr_value(udev_dev, "size");
+    if(!device_size_str) {
+        udev_device_unref(udev_dev);
+        udev_unref(udev_handle);
+        return 1;
+    }
+
+    device_size = strtoull(device_size_str, NULL, 10);
+    if(!device_size) {
+        udev_device_unref(udev_dev);
+        udev_unref(udev_handle);
+        return 1;
+    }
+
+    // Nope, device is still there.
+    udev_device_unref(udev_dev);
+    udev_unref(udev_handle);
+    return 0;
+}
 
 /**
  * Calculates the difference between two given time values.
@@ -910,6 +993,502 @@ WINDOW *message_window(WINDOW *parent, const char *title, char **msg, char wait)
         return NULL;
     } else {
         return window;
+    }
+}
+
+/**
+ * Reads the beginning-of-device and middle-of-device data and compares it with
+ * what is stored in bod_buffer/mod_buffer.
+ *
+ * @param fd  A handle to the device with the data to compare.
+ * @returns 0 if either the BOD or MOD data is an exact match, 1 if the data
+ *          did not match, or -1 if an error occurred.
+ */
+int compare_bod_mod_data(int fd) {
+    char *buffer;
+    char str[256];
+    size_t bytes_left_to_read, middle;
+    int ret;
+
+    if(!(buffer = malloc(BOD_MOD_BUFFER_SIZE))) {
+        snprintf(str, sizeof(str), "compare_bod_mod_data: malloc() failed: %s", strerror(errno));
+        return -1;
+    }
+
+    // Read in the first 1MB.
+    bytes_left_to_read = BOD_MOD_BUFFER_SIZE;
+    while(bytes_left_to_read) {
+        if((ret = read(fd, buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), bytes_left_to_read)) == -1) {
+            // If we get a read error here, we'll just zero out the rest of the sector and move on.
+            bzero(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
+            bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
+            if(lseek(fd, BOD_MOD_BUFFER_SIZE - bytes_left_to_read, SEEK_SET) == -1) {
+                snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+                log_log(str);
+                return -1;
+            }
+        } else {
+            bytes_left_to_read -= ret;
+        }
+    }
+
+    if(!memcmp(buffer, bod_buffer, BOD_MOD_BUFFER_SIZE)) {
+        log_log("compare_bod_mod_data(): Beginning-of-device data matches");
+        return 0;
+    }
+
+    // Read in the middle 1MB.
+    bytes_left_to_read = BOD_MOD_BUFFER_SIZE;
+    middle = device_stats.detected_size_bytes / 2;
+
+    if(lseek(fd, middle, SEEK_SET) == -1) {
+        snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+        log_log(str);
+        return -1;
+    }
+
+    while(bytes_left_to_read) {
+        if((ret = read(fd, buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), bytes_left_to_read)) == -1) {
+            bzero(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
+            bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
+            if(lseek(fd, middle + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), SEEK_SET) == -1) {
+                snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+                log_log(str);
+                return -1;
+            }
+        } else {
+            bytes_left_to_read -= ret;
+        }
+    }
+
+    if(!memcmp(buffer, mod_buffer, BOD_MOD_BUFFER_SIZE)) {
+        log_log("compare_bod_mod_data(): Middle-of-device data matches");
+        return 0;
+    }
+
+    log_log("compare_bod_mod_data(): Device data doesn't match");
+    return 1;
+}
+
+/**
+ * Compares the two devices and determines whether they are identical.
+ *
+ * @returns 0 if the two devices are identical; 1 if they are not, if one or
+ *          both of the specified devices do not exist, or if one or both of
+ *          the specified devices aren't actually devices; or -1 if an error
+ *          occurred.
+ */
+int are_devices_identical(const char *devname1, const char *devname2) {
+    struct stat devstat1, devstat2;
+
+    if(stat(devname1, &devstat1)) {
+        if(errno == ENOENT) {
+            // Non-existant devices shall be considered non-identical.
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    if(stat(devname2, &devstat2)) {
+        if(errno == ENOENT) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    if(!S_ISBLK(devstat1.st_mode) || !S_ISBLK(devstat2.st_mode) || !S_ISCHR(devstat1.st_mode) || !S_ISCHR(devstat2.st_mode)) {
+        return 1;
+    }
+
+    if((devstat1.st_mode & S_IFMT) != (devstat2.st_mode & S_IFMT)) {
+        // Devices aren't the same type
+        return 1;
+    }
+
+    if(devstat1.st_rdev != devstat2.st_rdev) {
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+ * Looks at all block devices for one that matches the geometry described in
+ * device_stats and whose BOD/MOD data matches either bod_buffer or mod_buffer,
+ * respectively.  If it finds it, it opens it and returns the file handle for
+ * it.
+ *
+ * @returns The file handle to the device, 0 if no matching device could be
+ *          found, -1 if an error occurred while searching for the device, -2
+ *          if multiple matching devices were found, or -3 if a single device
+ *          was found but it doesn't match what was specified on the command
+ *          line.
+ */
+int find_device() {
+    struct udev *udev_handle;
+    struct udev_enumerate *udev_enum;
+    struct udev_list_entry *list_entry;
+    struct udev_device *device;
+    const char *dev_size_str, *dev_name;
+    size_t dev_size;
+    int fd, ret, i;
+    char **matched_devices = NULL;
+    int num_matches = 0;
+    char str[256];
+
+    udev_handle = udev_new();
+    if(!udev_handle) {
+        log_log("find_device(): udev_new() failed");
+        return -1;
+    }
+
+    if(!(udev_enum = udev_enumerate_new(udev_handle))) {
+        log_log("find_device(): udev_enumerate_new() failed");
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    if(udev_enumerate_add_match_subsystem(udev_enum, "block") < 0) {
+        log_log("find_device(): udev_enumerate_add_match_subsystem() failed");
+        udev_enumerate_unref(udev_enum);
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    if(udev_enumerate_scan_devices(udev_enum) < 0) {
+        log_log("find_devices(): udev_enumerate_scan_devices() failed");
+        udev_enumerate_unref(udev_enum);
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    if(!(list_entry = udev_enumerate_get_list_entry(udev_enum))) {
+        // This scenario has to be an error.  What system wouldn't have any
+        // block devices??
+        log_log("find_devices(): udev_enumerate_get_list_entry() failed");
+        udev_enumerate_unref(udev_enum);
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    while(list_entry) {
+        if(!(device = udev_device_new_from_syspath(udev_handle, udev_list_entry_get_name(list_entry)))) {
+            list_entry = udev_list_entry_get_next(list_entry);
+            continue;
+        }
+
+        if(!(dev_size_str = udev_device_get_sysattr_value(device, "size"))) {
+            udev_device_unref(device);
+            list_entry = udev_list_entry_get_next(list_entry);
+            continue;
+        }
+
+        if(!(dev_name = udev_device_get_devnode(device))) {
+            udev_device_unref(device);
+            list_entry = udev_list_entry_get_next(list_entry);
+            continue;
+        }
+
+        snprintf(str, sizeof(str), "find_device(): Looking at device %s", dev_name);
+        log_log(str);
+
+        dev_size = strtoull(dev_size_str, NULL, 10) * 512;
+        if(dev_size != device_stats.reported_size_bytes) {
+            snprintf(str, sizeof(str), "find_device(): Rejecting device %s: device size doesn't match", dev_name);
+            udev_device_unref(device);
+            list_entry = udev_list_entry_get_next(list_entry);
+            continue;
+        }
+
+        if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
+            snprintf(str, sizeof(str), "find_device(): Rejecting device %s: open() returned an error: %s", dev_name, strerror(errno));
+            log_log(str);
+
+            udev_device_unref(device);
+            list_entry = udev_list_entry_get_next(list_entry);
+            continue;
+        }
+
+        ret = compare_bod_mod_data(fd);
+        close(fd);
+
+        if(ret) {
+            if(ret == -1) {
+                snprintf(str, sizeof(str),
+                    "find_device(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
+            } else {
+                snprintf(str, sizeof(str), "find_device(): Rejecting device %s: beginning-of-device and middle-of-device data doesn't match what's in the state file", dev_name);
+            }
+
+            log_log(str);
+            udev_device_unref(device);
+            list_entry = udev_list_entry_get_next(list_entry);
+            continue;
+        }
+
+        snprintf(str, sizeof(str), "find_device(): Got a match on device %s", dev_name);
+        log_log(str);
+
+        // Add the device to our list of devices
+        if(!(matched_devices = realloc(matched_devices, ++num_matches * sizeof(char *)))) {
+            snprintf(str, sizeof(str), "find_device(): realloc() failed: %s", strerror(errno));
+            udev_device_unref(device);
+            udev_enumerate_unref(udev_enum);
+            udev_unref(udev_handle);
+            return -1;
+        }
+
+        if(!(matched_devices[num_matches - 1] = malloc(strlen(dev_name) + 1))) {
+            snprintf(str, sizeof(str), "find_devices(): malloc() failed: %s", strerror(errno));
+            udev_device_unref(device);
+            udev_enumerate_unref(udev_enum);
+            udev_unref(udev_handle);
+            return -1;
+        }
+
+        strcpy(matched_devices[num_matches - 1], dev_name);
+        udev_device_unref(device);
+        list_entry = udev_list_entry_get_next(list_entry);
+    }
+
+    // We're done with udev now
+    udev_enumerate_unref(udev_enum);
+    udev_unref(udev_handle);
+
+    if(!num_matches) {
+        log_log("find_device(): No matching devices found");
+        return 0;
+    } else if(num_matches == 1) {
+        // Did the user specify a device on the command line?
+        if(program_options.device_name) {
+            // Does it match the device we found?
+            if(are_devices_identical(program_options.device_name, matched_devices[0])) {
+                // Nope
+                log_log("find_device(): Found a matching device, but it doesn't match the one specified on the command line");
+                free(matched_devices[0]);
+                free(matched_devices);
+                return -3;
+            }
+        } else {
+            if(!(program_options.device_name = malloc(strlen(matched_devices[0]) + 1))) {
+                snprintf(str, sizeof(str), "find_device(): malloc() failed: %s", strerror(errno));
+                log_log(str);
+                free(matched_devices[0]);
+                free(matched_devices);
+                return -1;
+            }
+
+            strcpy(program_options.device_name, matched_devices[0]);
+        }
+    } else {
+        // Did the user specify a device on the command line?
+        if(program_options.device_name) {
+            // Does it match one of the devices we found?
+            ret = 0;
+            for(i = 0; i < num_matches; i++) {
+                if(!are_devices_identical(program_options.device_name, matched_devices[i])) {
+                    // Cool, we found a match.  We'll just leave
+                    // program_options.device_name alone.
+                    ret = 1;
+                }
+            }
+
+            if(!ret) {
+                // Nope
+                for(i = 0; i < num_matches; i++) {
+                    free(matched_devices[i]);
+                }
+
+                log_log("find_device(): Found multiple matching devices, please specify which device we should use on the command line");
+                return -2;
+            }
+        } else {
+            // User didn't specify a device on the command line
+            for(i = 0; i < num_matches; i++) {
+                free(matched_devices[i]);
+            }
+
+            free(matched_devices);
+            return -2;
+        }
+    }
+
+    // Ok, we have a single match.  Re-open the device read/write.
+    if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
+        // Well crap.
+        snprintf(str, sizeof(str), "find_device(): Got a match on %s, but got an error while trying to re-open() it: %s",
+            matched_devices[0], strerror(errno));
+        log_log(str);
+        log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+
+        for(i = 0; i < num_matches; i++) {
+            free(matched_devices[i]);
+        }
+
+        free(matched_devices);
+        return -1;
+    }
+
+    return fd;
+}
+
+/**
+ * Monitor for new block devices.  When a new block device is detected, compare
+ * it to the information we know about our original device.  If it's a match,
+ * open a new file handle for it.
+ *
+ * @returns A new file descriptor for the new device, or -1 if an error
+ *          occurred.
+ */
+int wait_for_device_reconnect() {
+    struct udev_monitor *monitor;
+    struct udev_device *device;
+    struct udev *udev_handle;
+    const char *dev_size_str;
+    const char *dev_name;
+    char str[256];
+    size_t dev_size;
+    int fd, ret;
+    char *buffer;
+
+    if(!(buffer = (char *) malloc(BOD_MOD_BUFFER_SIZE))) {
+        snprintf(str, sizeof(str), "wait_for_device_reconnect(): Unable to allocate memory for buffer: %s", strerror(errno));
+        log_log(str);
+        return -1;
+    }
+
+    udev_handle = udev_new();
+    if(!udev_handle) {
+        return -1;
+    }
+
+    monitor = udev_monitor_new_from_netlink(udev_handle, "udev");
+    if(!monitor) {
+        snprintf(str, sizeof(str), "wait_for_device_reconnect(): udev_monitor_new_from_nelink() returned NULL");
+        log_log(str);
+
+        udev_unref(udev_handle);
+        free(buffer);
+        return -1;
+    }
+
+    if(udev_monitor_filter_add_match_subsystem_devtype(monitor, "block", "disk") < 0) {
+        snprintf(str, sizeof(str), "wait_for_device_reconnect(): udev_monitor_filter_add_match_subsystem_devtype() returned an error");
+        log_log(str);
+
+        udev_monitor_unref(monitor);
+        udev_unref(udev_handle);
+        free(buffer);
+        return -1;
+    }
+
+    if(udev_monitor_enable_receiving(monitor) < 0) {
+        snprintf(str, sizeof(str), "wait_for_device_reconnect(): udev_monitor_enable_receiving() returned an error");
+        log_log(str);
+
+        udev_monitor_unref(monitor);
+        udev_unref(udev_handle);
+        free(buffer);
+        return -1;
+    }
+
+    while(1) {
+        while(device = udev_monitor_receive_device(monitor)) {
+            dev_name = udev_device_get_devnode(device);
+            if(!dev_name) {
+                // Can't even get the name of the device... :-(
+                udev_device_unref(device);
+                continue;
+            }
+
+            snprintf(str, sizeof(str), "wait_for_device_reconnect(): Detected new device %s", dev_name);
+            log_log(str);
+
+            // Check the size of the device.
+            dev_size_str = udev_device_get_sysattr_value(device, "size");
+            if(!dev_size_str) {
+                // Nope, let's move on.
+                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Rejecting device %s: can't get size of device", dev_name);
+                log_log(str);
+
+                udev_device_unref(device);
+                continue;
+            }
+
+            dev_size = strtoull(dev_size_str, NULL, 10) * 512;
+            if(dev_size != device_stats.reported_size_bytes) {
+                // Device's reported size doesn't match
+                snprintf(str, sizeof(str),
+                    "wait_for_device_reconnect(): Rejecting device %s: device size doesn't match (this device = %'lu bytes, device we're looking for = "
+                    "%'lu bytes)", dev_name, dev_size, device_stats.reported_size_bytes);
+                log_log(str);
+
+                udev_device_unref(device);
+                continue;
+            }
+
+            if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
+                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Rejecting device %s: open() returned an error: %s", dev_name, strerror(errno));
+                log_log(str);
+
+                udev_device_unref(device);
+                continue;
+            }
+
+            ret = compare_bod_mod_data(fd);
+            close(fd);
+
+            if(ret) {
+                if(ret == -1) {
+                    snprintf(str, sizeof(str),
+                        "wait_for_device_reconnect(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data",
+                        dev_name);
+                } else {
+                    snprintf(str, sizeof(str), "wait_for_device_reconnect(): Rejecting device %s: beginning-of-device and middle-of-device data doesn't match",
+                    dev_name);
+                }
+
+                log_log(str);
+                udev_device_unref(device);
+                continue;
+            }
+
+            // Ok, we have a match.  Re-open the device read/write.
+            if((fd = open(dev_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
+                // Well crap.
+                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to re-open() it: %s",
+                    dev_name, strerror(errno));
+                log_log(str);
+                log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+
+                udev_device_unref(device);
+                continue;
+            }
+
+            snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on device %s", dev_name);
+            log_log(str);
+
+            // Copy the device name over to program_options.device_name
+            free(program_options.device_name);
+            program_options.device_name = (char *) malloc(strlen(dev_name) + 1);
+            strcpy(program_options.device_name, dev_name);
+
+            // Cleanup and exit
+            udev_device_unref(device);
+            udev_monitor_unref(monitor);
+            udev_unref(udev_handle);
+            free(buffer);
+            return fd;
+
+        }
+
+        if(program_options.no_curses) {
+            usleep(100000);
+        } else {
+            napms(100);
+        }
     }
 }
 
@@ -2198,9 +2777,9 @@ int parse_command_line_arguments(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-    int fd, block_size, cur_block_size, local_errno;
+  int fd, block_size, cur_block_size, restart_slice, local_errno;
     struct stat fs;
-    size_t bytes_left_to_write, ret, cur_sector, total_bytes_written, total_bytes_read;
+    size_t bytes_left_to_write, ret, cur_sector, total_bytes_written, total_bytes_read, middle_of_device;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf;
@@ -2496,6 +3075,7 @@ int main(int argc, char **argv) {
     }
 
     device_stats.num_sectors = device_stats.reported_size_bytes / device_stats.sector_size;
+    device_stats.device_num = fs.st_rdev;
     device_stats.preferred_block_size = fs.st_blksize;
     device_stats.max_request_size = device_stats.sector_size * max_sectors_per_request;
 
@@ -2565,6 +3145,8 @@ int main(int argc, char **argv) {
     wait_for_file_lock(NULL);
 
     probe_device_speeds(fd, device_stats.num_sectors, block_size);
+
+    middle_of_device = device_stats.detected_size_bytes / 2;
 
     // Start stress testing the device.
     //
@@ -2672,16 +3254,42 @@ int main(int argc, char **argv) {
 
         read_order = random_list();
 
-        for(cur_slice = 0; cur_slice < 16; cur_slice++) {
+        for(cur_slice = 0, restart_slice = 0; cur_slice < 16; cur_slice++, restart_slice = 0) {
             random_calls = 0;
             srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
 
             if(lseek(fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, SEEK_SET) == -1) {
-                print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                    device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
+                close(fd);
+                fd = -1;
 
-                cleanup();
-                return 0;
+                if(did_device_disconnect() && num_rounds > 0) {
+                    log_log("Device disconnected.  Waiting for device to be reconnected...");
+                    window = message_window(stdscr, "Device Disconnected", (char *[]) {
+                        "The device has been disconnected.  It may have done this on its own, or it may",
+                        "have been manually removed (e.g., if someone pulled the device out of its USB",
+                        "port).",
+                        "",
+                        "Don't worry -- just plug the device back in.  We'll verify that it's the same",
+                        "device, then resume the stress test automatically.",
+                        NULL
+                    }, 0);
+
+                    fd = wait_for_device_reconnect();
+
+                    erase_and_delete_window(window);
+                    redraw_screen();
+                }
+
+                if(fd == -1) {
+                    print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
+                        device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
+
+                    cleanup();
+                    return 0;
+                } else {
+                    cur_slice--;
+                    continue;
+                }
             }
 
             for(cur_sector = get_slice_start(read_order[cur_slice]);
@@ -2704,10 +3312,59 @@ int main(int argc, char **argv) {
                     wait_for_file_lock(NULL);
 
                     if((ret = write(fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write)) == -1) {
-                        print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                            device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                        close(fd);
+                        fd = -1;
 
-                        return 0;
+                        if(did_device_disconnect() && num_rounds > 0) {
+                            log_log("Device disconnected.  Waiting for device to be reconnected...");
+                            window = message_window(stdscr, "Device Disconnected", (char *[]) {
+                                "The device has been disconnected.  It may have done this on its own, or it may",
+                                "have been manually removed (e.g., if someone pulled the device out of its USB",
+                                "port).",
+                                "",
+                                "Don't worry -- just plug the device back in.  We'll verify that it's the same",
+                                "device, then resume the stress test automatically.",
+                                NULL
+                            }, 0);
+
+                            fd = wait_for_device_reconnect();
+
+                            erase_and_delete_window(window);
+                            redraw_screen();
+                        }
+
+                        if(fd == -1) {
+                            print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
+                                device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+
+                            return 0;
+                        } else {
+                            // Start the slice over to avoid the nightmare of
+                            // figuring out where we need to restart from
+                            restart_slice = 1;
+                            break;
+                        }
+                    }
+
+                    // Do we need to update the BOD buffer?
+                    if(((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write)) < BOD_MOD_BUFFER_SIZE) {
+                        memcpy(
+                            bod_buffer + (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write),
+                            buf + (cur_block_size - bytes_left_to_write),
+                            ((cur_sector * device_stats.sector_size) + ret) > BOD_MOD_BUFFER_SIZE ?
+                            BOD_MOD_BUFFER_SIZE - (cur_sector * device_stats.sector_size) : ret
+                        );
+                    }
+
+                    // Do we need to update the MOD buffer?
+                    if(((cur_sector * device_stats.sector_size) >= middle_of_device) && (((cur_sector * device_stats.sector_size) +
+                        (cur_block_size - bytes_left_to_write)) < (middle_of_device + BOD_MOD_BUFFER_SIZE))) {
+                        memcpy(
+                            mod_buffer + ((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write) - middle_of_device),
+                            buf + (cur_block_size - bytes_left_to_write),
+                            ((cur_sector * device_stats.sector_size) + ret) > (middle_of_device + BOD_MOD_BUFFER_SIZE) ?
+                            BOD_MOD_BUFFER_SIZE - ((cur_sector * device_stats.sector_size) - middle_of_device) : ret
+                        );
                     }
 
                     bytes_left_to_write -= ret;
@@ -2726,6 +3383,17 @@ int main(int argc, char **argv) {
                     stats_log(num_rounds, total_bytes_written, total_bytes_read, device_stats.num_bad_sectors);
                 }
 
+            }
+
+            if(restart_slice) {
+                // Unmark the sectors we've written in this slice so far
+                for(j = get_slice_start(read_order[cur_slice]); j < get_slice_start(read_order[cur_slice] + 1); j++) {
+                    sector_display.sector_map[j] &= 0x01;
+                }
+
+                cur_slice--;
+                redraw_sector_map();
+                refresh();
             }
         }
 
@@ -2771,11 +3439,48 @@ int main(int argc, char **argv) {
                     wait_for_file_lock(NULL);
 
                     if((ret = read(fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write)) == -1) {
-                        print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                            device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_READ_ERROR);
+                        close(fd);
+                        fd = -1;
 
-                        cleanup();
-                        return 0;
+                        if(did_device_disconnect()) {
+                            log_log("Device disconnected.  Waiting for device to be reconnected...");
+                            window = message_window(stdscr, "Device Disconnected", (char *[]) {
+                                "The device has been disconnected.  It may have done this on its own, or it may",
+                                "have been manually removed (e.g., if someone pulled the device out of its USB",
+                                "port).",
+                                "",
+                                "Don't worry -- just plug the device back in.  We'll verify that it's the same",
+                                "device, then resume the stress test automatically.",
+                                NULL
+                            }, 0);
+
+                            fd = wait_for_device_reconnect();
+
+                            erase_and_delete_window(window);
+                            redraw_screen();
+                        }
+
+                        if(fd == -1) {
+                            print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
+                                device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_READ_ERROR);
+
+                            cleanup();
+                            return 0;
+                        }
+
+                        // For reads, we can recover a little more
+                        // gracefully.  We just need to seek back
+                        // to where we were and repeat the read.
+                        if(lseek(fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), SEEK_SET) == -1) {
+                            // I guess just give up now
+                            print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
+                                device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_READ_ERROR);
+
+                            cleanup();
+                            return 0;
+                        }
+
+                        continue;
                     }
 
                     bytes_left_to_write -= ret;
