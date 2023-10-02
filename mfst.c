@@ -111,7 +111,7 @@ struct {
 
 /**
  * Tries to determine whether the device was disconnected from the system.
- *
+ * 
  * @returns Non-zero if the device was disconnected from the system, or zero if
  *          the device appears to still be present (or if an error occurred)
  */
@@ -722,8 +722,8 @@ void print_class_marking_qualifications() {
                 print_with_color(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, RED_ON_BLACK, "No     ");
             }
         } else {
-            mvaddstr(SPEED_A1_RESULT_Y, SPEED_A2_RESULT_X, "Unknown");
-            mvaddstr(SPEED_A1_RESULT_Y, SPEED_A2_RESULT_X, "Unknown");
+            mvaddstr(SPEED_A1_RESULT_Y, SPEED_A1_RESULT_X, "Unknown");
+            mvaddstr(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, "Unknown");
         }
     }
 }
@@ -752,7 +752,7 @@ void redraw_screen() {
         mvaddstr(SEQUENTIAL_WRITE_SPEED_LABEL_Y, SEQUENTIAL_WRITE_SPEED_LABEL_X, "Sequential write:");
         mvaddstr(RANDOM_READ_SPEED_LABEL_Y     , RANDOM_READ_SPEED_LABEL_X     , "Random read     :");
         mvaddstr(RANDOM_WRITE_SPEED_LABEL_Y    , RANDOM_WRITE_SPEED_LABEL_X    , "Random write    :");
-	mvaddstr(DEVICE_NAME_LABEL_Y           , DEVICE_NAME_LABEL_X           , " Device: "        );
+        mvaddstr(DEVICE_NAME_LABEL_Y           , DEVICE_NAME_LABEL_X           , " Device: "        );
         attroff(A_BOLD);
 
         // Draw the device name
@@ -776,10 +776,10 @@ void redraw_screen() {
         mvaddstr(COLOR_KEY_FAILED_BLOCK_Y, COLOR_KEY_FAILED_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_RED));
 
-        mvaddstr(BLOCK_SIZE_LABEL_Y    , BLOCK_SIZE_LABEL_X    , "=");
-        mvaddstr(WRITTEN_BLOCK_LABEL_Y , WRITTEN_BLOCK_LABEL_X , "= Written");
+        mvaddstr(BLOCK_SIZE_LABEL_Y    , BLOCK_SIZE_LABEL_X    , "="         );
+        mvaddstr(WRITTEN_BLOCK_LABEL_Y , WRITTEN_BLOCK_LABEL_X , "= Written" );
         mvaddstr(VERIFIED_BLOCK_LABEL_Y, VERIFIED_BLOCK_LABEL_X, "= Verified");
-        mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed");
+        mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed"  );
 
         if(num_rounds != -1) {
             j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
@@ -828,12 +828,12 @@ void redraw_screen() {
 
         if(device_speeds.random_read_iops) {
             mvprintw(RANDOM_READ_SPEED_DISPLAY_Y, RANDOM_READ_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_speeds.random_read_iops,
-	        format_rate(device_speeds.random_read_iops * 4096, rate, sizeof(rate)));
+                format_rate(device_speeds.random_read_iops * 4096, rate, sizeof(rate)));
         }
 
         if(device_speeds.random_write_iops) {
             mvprintw(RANDOM_WRITE_SPEED_DISPLAY_Y, RANDOM_WRITE_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_speeds.random_write_iops,
-		format_rate(device_speeds.random_write_iops * 4096, rate, sizeof(rate)));
+                format_rate(device_speeds.random_write_iops * 4096, rate, sizeof(rate)));
         }
 
         if(device_speeds.sequential_read_speed != 0 || device_speeds.sequential_write_speed != 0 || device_speeds.random_read_iops != 0 ||
@@ -843,7 +843,6 @@ void redraw_screen() {
 
         print_class_marking_qualifications();
         redraw_sector_map();
-
         refresh();
     }
 }
@@ -998,7 +997,7 @@ WINDOW *message_window(WINDOW *parent, const char *title, char **msg, char wait)
 /**
  * Reads the beginning-of-device and middle-of-device data and compares it with
  * what is stored in bod_buffer/mod_buffer.
- *
+ * 
  * @param fd  A handle to the device with the data to compare.
  * @returns 0 if either the BOD or MOD data is an exact match, 1 if the data
  *          did not match, or -1 if an error occurred.
@@ -1071,7 +1070,7 @@ int compare_bod_mod_data(int fd) {
 
 /**
  * Compares the two devices and determines whether they are identical.
- *
+ * 
  * @returns 0 if the two devices are identical; 1 if they are not, if one or
  *          both of the specified devices do not exist, or if one or both of
  *          the specified devices aren't actually devices; or -1 if an error
@@ -1118,7 +1117,7 @@ int are_devices_identical(const char *devname1, const char *devname2) {
  * device_stats and whose BOD/MOD data matches either bod_buffer or mod_buffer,
  * respectively.  If it finds it, it opens it and returns the file handle for
  * it.
- *
+ * 
  * @returns The file handle to the device, 0 if no matching device could be
  *          found, -1 if an error occurred while searching for the device, -2
  *          if multiple matching devices were found, or -3 if a single device
@@ -1337,7 +1336,7 @@ int find_device() {
  * Monitor for new block devices.  When a new block device is detected, compare
  * it to the information we know about our original device.  If it's a match,
  * open a new file handle for it.
- *
+ * 
  * @returns A new file descriptor for the new device, or -1 if an error
  *          occurred.
  */
@@ -2398,13 +2397,13 @@ int probe_device_speeds(int fd, size_t num_sectors, size_t optimal_write_block_s
                             if(rd) {
                                 snprintf(str, sizeof(str), "%0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs, rate, sizeof(rate)));
                                 mvprintw(
-				    wr ? RANDOM_WRITE_SPEED_DISPLAY_Y : RANDOM_READ_SPEED_DISPLAY_Y,
-				    wr ? RANDOM_WRITE_SPEED_DISPLAY_X : RANDOM_READ_SPEED_DISPLAY_X, "%-28s", str);
+                                    wr ? RANDOM_WRITE_SPEED_DISPLAY_Y : RANDOM_READ_SPEED_DISPLAY_Y,
+                                    wr ? RANDOM_WRITE_SPEED_DISPLAY_X : RANDOM_READ_SPEED_DISPLAY_X, "%-28s", str);
                             } else {
                                 snprintf(str, sizeof(str), "%s", format_rate(ctr / secs, rate, sizeof(rate)));
                                 mvprintw(
-				    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_Y : SEQUENTIAL_READ_SPEED_DISPLAY_Y,
-				    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_X : SEQUENTIAL_READ_SPEED_DISPLAY_X, "%-28s", str);
+                                    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_Y : SEQUENTIAL_READ_SPEED_DISPLAY_Y,
+                                    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_X : SEQUENTIAL_READ_SPEED_DISPLAY_X, "%-28s", str);
                             }
 
                             refresh();
@@ -2776,7 +2775,7 @@ int parse_command_line_arguments(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-  int fd, block_size, cur_block_size, restart_slice, local_errno;
+    int fd, block_size, cur_block_size, restart_slice, local_errno;
     struct stat fs;
     size_t bytes_left_to_write, ret, cur_sector, total_bytes_written, total_bytes_read, middle_of_device;
     unsigned int sectors_per_block;
