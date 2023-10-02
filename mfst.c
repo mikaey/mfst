@@ -67,7 +67,9 @@ struct {
     size_t reported_size_bytes;
     size_t detected_size_bytes;
     int sector_size;
+    unsigned int physical_sector_size;
     int preferred_block_size;
+    int block_size;
     int max_request_size;
     dev_t device_num;
     FakeFlashEnum is_fake_flash;
@@ -98,7 +100,6 @@ struct {
     size_t num_blocks;
     size_t num_lines;
     size_t blocks_per_line;
-    size_t blocks_in_last_line;
 } sector_display;
 
 struct {
@@ -365,7 +366,7 @@ void draw_sectors(size_t start_sector, size_t end_sector) {
         cur_block_has_bad_sectors = 0;
         num_written_sectors = 0;
         num_read_sectors = 0;
-        if(i == (sector_display.num_blocks + sector_display.blocks_in_last_line - 1)) {
+        if(i == (sector_display.num_blocks - 1)) {
             num_sectors_in_cur_block = sector_display.sectors_in_last_block;
         } else {
             num_sectors_in_cur_block = sector_display.sectors_per_block;
@@ -469,21 +470,19 @@ char is_sector_bad(size_t sector_num) {
  * the display parameters are still recomputed.
  */
 void redraw_sector_map() {
-    size_t sectors_in_last_line;
-
     if(program_options.no_curses) {
         return;
     }
 
     sector_display.blocks_per_line = COLS - 41;
-    sector_display.num_lines = LINES - 9;
+    sector_display.num_lines = LINES - 8;
     sector_display.num_blocks = sector_display.num_lines * sector_display.blocks_per_line;
-    sector_display.sectors_per_block = device_stats.num_sectors / sector_display.num_blocks;
-    sectors_in_last_line = device_stats.num_sectors - (sector_display.num_blocks * sector_display.sectors_per_block);
-    if(sectors_in_last_line) {
-        sector_display.sectors_in_last_block = sectors_in_last_line % sector_display.sectors_per_block;
-        sector_display.blocks_in_last_line = (sectors_in_last_line / sector_display.sectors_per_block) + (sector_display.sectors_in_last_block ? 1 : 0);
+
+    if(device_stats.num_sectors % sector_display.num_blocks) {
+        sector_display.sectors_per_block = device_stats.num_sectors / (sector_display.num_blocks - 1);
+        sector_display.sectors_in_last_block = device_stats.num_sectors % (sector_display.num_blocks - 1);
     } else {
+        sector_display.sectors_per_block = device_stats.num_sectors / sector_display.num_blocks;
         sector_display.sectors_in_last_block = sector_display.sectors_per_block;
     }
 
