@@ -67,7 +67,6 @@ struct {
     size_t reported_size_bytes;
     size_t detected_size_bytes;
     int sector_size;
-    unsigned int physical_sector_size;
     int preferred_block_size;
     int block_size;
     int max_request_size;
