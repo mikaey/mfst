@@ -340,7 +340,7 @@ void draw_sector(size_t sector_num, int color) {
     row = block_num / sector_display.blocks_per_line;
     col = block_num - (row * sector_display.blocks_per_line);
     attron(COLOR_PAIR(color));
-    mvprintw(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, " ");
+    mvaddstr(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, " ");
     attroff(COLOR_PAIR(color));
 }
 
