@@ -20,7 +20,14 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <libudev.h>
+#include <json-c/json_object.h>
+#include <json-c/json_util.h>
+#include <json-c/json_pointer.h>
 #include "mfst.h"
+#include "base64.h"
+
+const char *WARNING_TITLE = "WARNING";
+const char *ERROR_TITLE = "ERROR";
 
 unsigned long random_calls;
 unsigned long initial_seed;
@@ -31,9 +38,6 @@ char speed_qualifications_shown;
 char ncurses_active;
 ssize_t num_rounds;
 int is_writing;
-
-const char *WARNING_TITLE = "WARNING";
-const char *ERROR_TITLE = "ERROR";
 
 // To handle device disconnects/reconnects, we're going to create a couple of
 // buffers where we hold the most recent 1MB of data that we wrote to the
@@ -67,6 +71,7 @@ struct {
     size_t reported_size_bytes;
     size_t detected_size_bytes;
     int sector_size;
+    unsigned int physical_sector_size;
     int preferred_block_size;
     int block_size;
     int max_request_size;
@@ -84,6 +89,7 @@ struct {
     char orig_no_curses; // What was passed on the command line?
     char dont_show_warning_message;
     char *lock_file;
+    char *state_file;
 } program_options;
 
 struct {
@@ -107,6 +113,376 @@ struct {
     size_t previous_bytes_read;
     size_t previous_bad_sectors;
 } stress_test_stats;
+
+struct {
+    size_t bytes_read;
+    size_t bytes_written;
+    ssize_t first_failure_round;
+    ssize_t ten_percent_failure_round;
+    ssize_t twenty_five_percent_failure_round;
+} state_data;
+
+/**
+ * Tests to see if the given JSON pointer exists in the specified object.
+ * 
+ * @param obj   The object to examine.
+ * @param path  The JSON pointer to test for in the object.
+ * 
+ * @returns 0 if the specified property exists in obj, or -1 if it does not.
+ */
+int test_json_pointer(struct json_object *obj, const char *path) {
+    struct json_object *child;
+    int ret;
+
+    ret = json_pointer_get(obj, path, &child);
+    
+    return ret;
+}
+
+/**
+ * Saves the program state to the file named in program_options.state_file.
+ * 
+ * @returns 0 if the state was saved successfully, or if
+ *          program_options.state_file is NULL.  Returns -1 if an error
+ *          occurred.
+*/
+int save_state() {
+    struct json_object *root, *parent, *obj;
+    char *filename;
+    char *sector_map, *b64str;
+    size_t i, j;
+
+    // If no state file was specified, do nothing
+    if(!program_options.state_file) {
+        return 0;
+    }
+
+    // The json_object_new_* series of functions don't specify what the return
+    // value is if something goes wrong...so I'm just assuming that nothing
+    // *can* go wrong.  Totally a good idea, right?
+    root = json_object_new_object();
+
+    // Put together the device_geomery object
+    parent = json_object_new_object();
+
+    obj = json_object_new_uint64(device_stats.reported_size_bytes);
+    if(json_object_object_add(parent, "reported_size", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_uint64(device_stats.detected_size_bytes);
+    if(json_object_object_add(parent, "detected_size", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_int(device_stats.sector_size);
+    if(json_object_object_add(parent, "sector_size", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    if(json_object_object_add(root, "device_geometry", parent)) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    // Put together the device_info object
+    parent = json_object_new_object();
+
+    obj = json_object_new_int(device_stats.block_size);
+    if(json_object_object_add(parent, "block_size", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_double(device_speeds.sequential_read_speed);
+    if(json_object_object_add(parent, "sequential_read_speed", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_double(device_speeds.sequential_write_speed);
+    if(json_object_object_add(parent, "sequential_write_speed", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_double(device_speeds.random_read_iops);
+    if(json_object_object_add(parent, "random_read_iops", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_double(device_speeds.random_write_iops);
+    if(json_object_object_add(parent, "random_write_iops", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    if(json_object_object_add(root, "device_info", parent)) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    // Put together the program_options object
+    parent = json_object_new_object();
+
+    obj = json_object_new_boolean(program_options.orig_no_curses);
+    if(json_object_object_add(parent, "disable_curses", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    if(program_options.stats_file) {
+        if(filename = realpath(program_options.stats_file, NULL)) {
+            obj = json_object_new_string(filename);
+            free(filename);
+
+            if(json_object_object_add(parent, "stats_file", obj)) {
+                json_object_put(obj);
+                json_object_put(parent);
+                json_object_put(root);
+                return -1;
+            }
+
+            obj = json_object_new_uint64(program_options.stats_interval);
+            if(json_object_object_add(parent, "stats_interval", obj)) {
+                json_object_put(obj);
+                json_object_put(parent);
+                json_object_put(root);
+                return -1;
+            }
+        } else {
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if(program_options.log_file) {
+        if(filename = realpath(program_options.log_file, NULL)) {
+            obj = json_object_new_string(filename);
+            free(filename);
+
+            if(json_object_object_add(parent, "log_file", obj)) {
+                json_object_put(obj);
+                json_object_put(parent);
+                json_object_put(root);
+                return -1;
+            }
+        } else {
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if(filename = realpath(program_options.lock_file, NULL)) {
+        obj = json_object_new_string(filename);
+        free(filename);
+
+        if(json_object_object_add(parent, "lock_file", obj)) {
+            json_object_put(obj);
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    } else {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    if(json_object_object_add(root, "program_options", parent)) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    // Put together the state data.
+
+    parent = json_object_new_object();
+
+    // The strategy for savestating is that we're going to savestate once every
+    // round, at the end of the round.  In the event of a restart, we'll just
+    // start over from the beginning of that round.
+    //
+    // The sector map has info on whether each sector has been read/written in
+    // this round, as well as whether each sector has experienced an error.
+    // Really all we're concerned about is the bad sector flag -- so to save
+    // space, we'll compact that info down into a bitfield.  In the serialized
+    // version of the bitmap, each byte will represent 8 sectors, with the
+    // first sector being in the most significant bit and the last sector being
+    // in the least significant bit.
+    sector_map = (char *) malloc((device_stats.num_sectors / 8) + ((device_stats.num_sectors % 8) ? 1 : 0));
+    for(i = 0; i < device_stats.num_sectors; i += 8) {
+        sector_map[i / 8] = 0;
+        for(j = 0; j < 8; j++) {
+            if((i + j) < device_stats.num_sectors) {
+                sector_map[i / 8] = (sector_map[i / 8] << 1) | (sector_display.sector_map[i + j] & 0x01);
+            } else {
+                sector_map[i / 8] <<= 1;
+            }
+        }
+    }
+
+    b64str = base64_encode(sector_map, (device_stats.num_sectors / 8) + ((device_stats.num_sectors % 8) ? 1 : 0), NULL);
+    free(sector_map);
+
+    if(!b64str) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_string(b64str);
+    free(b64str);
+
+    if(json_object_object_add(parent, "sector_map", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    // Save the beginning-of-device and middle-of-device data.
+    if(!(b64str = base64_encode(bod_buffer, sizeof(bod_buffer), NULL))) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_string(b64str);
+    free(b64str);
+
+    if(json_object_object_add(parent, "beginning_of_device_data", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    if(!(b64str = base64_encode(mod_buffer, sizeof(mod_buffer), NULL))) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_string(b64str);
+    free(b64str);
+
+    if(json_object_object_add(parent, "middle_of_device_data", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_int64(num_rounds);
+    if(json_object_object_add(parent, "rounds_completed", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_uint64(state_data.bytes_read);
+    if(json_object_object_add(parent, "bytes_read", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    obj = json_object_new_uint64(state_data.bytes_written);
+    if(json_object_object_add(parent, "bytes_written", obj)) {
+        json_object_put(obj);
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    if(state_data.first_failure_round != -1) {
+        obj = json_object_new_int64(state_data.first_failure_round);
+        if(json_object_object_add(parent, "first_failure_round", obj)) {
+            json_object_put(obj);
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if(state_data.ten_percent_failure_round != -1) {
+        obj = json_object_new_int64(state_data.ten_percent_failure_round);
+        if(json_object_object_add(parent, "ten_percent_failure_round", obj)) {
+            json_object_put(obj);
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if(state_data.twenty_five_percent_failure_round != -1) {
+        obj = json_object_new_int64(state_data.twenty_five_percent_failure_round);
+        if(json_object_object_add(parent, "twenty_five_percent_failure_round", obj)) {
+            json_object_put(obj);
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if(json_object_object_add(root, "state", parent)) {
+        json_object_put(parent);
+        json_object_put(root);
+        return -1;
+    }
+
+    // Write the state data to a temporary file in case we run into an error
+    // while calling json_object_to_file.
+    assert(filename = malloc(strlen(program_options.state_file) + 6));
+    sprintf(filename, "%s.temp", program_options.state_file);
+
+    if(json_object_to_file(filename, root)) {
+        free(filename);
+        json_object_put(root);
+        return -1;
+    }
+
+    json_object_put(root);
+
+    // Now move the temporary file overtop of the original.
+    if(rename(filename, program_options.state_file)) {
+        unlink(filename);
+        free(filename);
+        return -1;
+    }
+
+    free(filename);
+    return 0;
+}
 
 /**
  * Tries to determine whether the device was disconnected from the system.
@@ -244,6 +620,463 @@ void log_log(char *msg) {
 }
 
 /**
+ * Loads the program state from the file named in program_options.state_file.
+ * 
+ * @returns 0 if a state file was present and loaded successfully, -1 if an
+ *          error occurred, or 1 if the state file could not be found or if
+ *          program_options.state_file is NULL.
+ */
+int load_state() {
+    struct stat statbuf;
+    struct json_object *root, *obj;
+    char str[256];
+    int i, j;
+    char *buffer;
+    size_t detected_size, sector_size, k, l;
+
+    // A bunch of constants for the JSON pointers to our JSON object
+    const char *reported_size_ptr = "/device_geometry/reported_size";
+    const char *detected_size_ptr = "/device_geometry/detected_size";
+    const char *sector_size_ptr = "/device_geometry/sector_size";
+    const char *block_size_ptr = "/device_info/block_size";
+    const char *sequential_read_speed_ptr = "/device_info/sequential_read_speed";
+    const char *sequential_write_speed_ptr = "/device_info/sequential_write_speed";
+    const char *random_read_iops_ptr = "/device_info/random_read_iops";
+    const char *random_write_iops_ptr = "/device_info/random_write_iops";
+    const char *disable_curses_ptr = "/program_options/disable_curses";
+    const char *stats_file_ptr = "/program_options/stats_file";
+    const char *log_file_ptr = "/program_options/log_file";
+    const char *lock_file_ptr = "/program_options/lock_file";
+    const char *stats_interval_ptr = "/program_options/stats_interval";
+    const char *sector_map_ptr = "/state/sector_map";
+    const char *bod_data_ptr = "/state/beginning_of_device_data";
+    const char *mod_data_ptr = "/state/middle_of_device_data";
+    const char *rounds_completed_ptr = "/state/rounds_completed";
+    const char *bytes_read_ptr = "/state/bytes_read";
+    const char *bytes_written_ptr = "/state/bytes_written";
+    const char *ffr_ptr = "/state/first_failure_round";
+    const char *tpfr_ptr = "/state/ten_percent_failure_round";
+    const char *tfpfr_ptr = "/state/twenty_five_percent_failure_round";
+
+    const char *all_props[] = {
+        reported_size_ptr,
+        detected_size_ptr,
+        sector_size_ptr,
+        block_size_ptr,
+        sequential_read_speed_ptr,
+        sequential_write_speed_ptr,
+        random_read_iops_ptr,
+        random_write_iops_ptr,
+        disable_curses_ptr,
+        stats_file_ptr,
+        log_file_ptr,
+        lock_file_ptr,
+        stats_interval_ptr,
+        sector_map_ptr,
+        bod_data_ptr,
+        mod_data_ptr,
+        rounds_completed_ptr,
+        bytes_read_ptr,
+        bytes_written_ptr,
+        ffr_ptr,
+        tpfr_ptr,
+        tfpfr_ptr,
+        NULL
+    };
+
+    const json_type prop_types[] = {
+        json_type_int,     // reported_size_ptr
+        json_type_int,     // detected_size_ptr
+        json_type_int,     // sector_size_ptr
+        json_type_int,     // block_size_ptr
+        json_type_double,  // sequential_read_speed_ptr
+        json_type_double,  // sequential_write_speed_ptr
+        json_type_double,  // random_read_iops_ptr
+        json_type_double,  // random_write_iops_ptr
+        json_type_boolean, // disable_curses_ptr
+        json_type_string,  // stats_file_ptr
+        json_type_string,  // log_file_ptr
+        json_type_string,  // lock_file_ptr
+        json_type_int,     // stats_interval_ptr
+        json_type_string,  // sector_map_ptr
+        json_type_string,  // bod_data_ptr
+        json_type_string,  // mod_data_ptr
+        json_type_int,     // rounds_completed_ptr
+        json_type_int,     // bytes_read_ptr
+        json_type_int,     // bytes_written_ptr
+        json_type_int,     // ffr_ptr
+        json_type_int,     // tpfr_ptr
+        json_type_int      // tfpfr_ptr
+    };
+
+    const int required_props[] = {
+        1, // reported_size_ptr
+        1, // detected_size_ptr
+        1, // sector_size_ptr
+        1, // block_size_ptr
+        1, // sequential_read_speed_ptr
+        1, // sequential_write_speed_ptr
+        1, // random_read_iops_ptr
+        1, // random_write_iops_ptr
+        0, // disable_curses_ptr
+        0, // stats_file_ptr
+        0, // log_file_ptr
+        0, // lock_file_ptr
+        0, // stats_interval_ptr
+        1, // sector_map_ptr
+        1, // bod_data_ptr
+        1, // mod_data_ptr
+        1, // rounds_completed_ptr
+        1, // bytes_read_ptr
+        1, // bytes_written_ptr
+        0, // ffr_ptr
+        0, // tpfr_ptr
+        0  // tfpfr_ptr
+    };
+
+    const int base64_props[] = {
+        0, // reported_size_ptr
+        0, // detected_size_ptr
+        0, // sector_size_ptr
+        0, // block_size_ptr
+        0, // sequential_read_speed_ptr
+        0, // sequential_write_speed_ptr
+        0, // random_read_iops_ptr
+        0, // random_write_iops_ptr
+        0, // disable_curses_ptr
+        0, // stats_file_ptr
+        0, // log_file_ptr
+        0, // lock_file_ptr
+        0, // stats_interval_ptr
+        1, // sector_map_ptr
+        1, // bod_data_ptr
+        1, // mod_data_ptr
+        0, // rounds_completed_ptr
+        0, // bytes_read_ptr
+        0, // bytes_written_ptr
+        0, // ffr_ptr
+        0, // tpfr_ptr
+        0  // tfpfr_ptr
+    };
+
+    char *buffers[] = {
+        NULL, // reported_size_ptr
+        NULL, // detected_size_ptr
+        NULL, // sector_size_ptr
+        NULL, // block_size_ptr
+        NULL, // sequential_read_speed_ptr
+        NULL, // sequential_write_speed_ptr
+        NULL, // random_read_iops_ptr
+        NULL, // random_write_iops_ptr
+        NULL, // disable_curses_ptr
+        NULL, // stats_file_ptr
+        NULL, // log_file_ptr
+        NULL, // lock_file_ptr
+        NULL, // stats_interval_ptr
+        NULL, // sector_map_ptr
+        NULL, // bod_data_ptr
+        NULL, // mod_data_ptr
+        NULL, // rounds_completed_ptr
+        NULL, // bytes_read_ptr
+        NULL, // bytes_written_ptr
+        NULL, // ffr_ptr
+        NULL, // tpfr_ptr
+        NULL, // tfpfr_ptr
+    };
+
+    size_t buffer_lens[] = {
+        0, // reported_size_ptr
+        0, // detected_size_ptr
+        0, // sector_size_ptr
+        0, // block_size_ptr
+        0, // sequential_read_speed_ptr
+        0, // sequential_write_speed_ptr
+        0, // random_read_iops_ptr
+        0, // random_write_iops_ptr
+        0, // disable_curses_ptr
+        0, // stats_file_ptr
+        0, // log_file_ptr
+        0, // lock_file_ptr
+        0, // stats_interval_ptr
+        0, // sector_map_ptr
+        0, // bod_data_ptr
+        0, // mod_data_ptr
+        0, // rounds_completed_ptr
+        0, // bytes_read_ptr
+        0, // bytes_written_ptr
+        0, // ffr_ptr
+        0, // tpfr_ptr
+        0, // tfpfr_ptr
+    };
+
+    void *destinations[] = {
+        &device_stats.reported_size_bytes,
+        &device_stats.detected_size_bytes,
+        &device_stats.sector_size,
+        &device_stats.block_size,
+        &device_speeds.sequential_read_speed,
+        &device_speeds.sequential_write_speed,
+        &device_speeds.random_read_iops,
+        &device_speeds.random_write_iops,
+        &program_options.no_curses,
+        &program_options.stats_file,
+        &program_options.log_file,
+        &program_options.lock_file,
+        &program_options.stats_interval,
+        &sector_display.sector_map,
+        bod_buffer,
+        mod_buffer,
+        &num_rounds,
+        &state_data.bytes_read,
+        &state_data.bytes_written,
+        &state_data.first_failure_round,
+        &state_data.ten_percent_failure_round,
+        &state_data.twenty_five_percent_failure_round
+    };
+
+    if(!program_options.state_file) {
+        return 1;
+    }
+
+    if(stat(program_options.state_file, &statbuf) == -1) {
+        if(errno == ENOENT) {
+            log_log("load_state(): state file not present");
+            return 1;
+        } else {
+            snprintf(str, sizeof(str), "load_state(): unable to stat() state file: %s", strerror(errno));
+            log_log(str);
+            return -1;
+        }
+    }
+
+    if(!(root = json_object_from_file(program_options.state_file))) {
+        snprintf(str, sizeof(str), "load_state(): Unable to load state file: %s", json_util_get_last_err());
+        log_log(str);
+        return -1;
+    }
+
+    // Validate the JSON before we try to load anything from it.
+    for(i = 0; all_props[i]; i++) {
+        // Make sure required properties are present in the file.
+        if(required_props[i] && test_json_pointer(root, all_props[i])) {
+            snprintf(str, sizeof(str), "load_state(): Rejecting state file: required property %s is missing from JSON", all_props[i]);
+            log_log(str);
+            json_object_put(root);
+            return -1;
+        }
+
+        // Make sure data types match.
+        if(!json_pointer_get(root, all_props[i], &obj)) {
+            if(json_object_get_type(obj) == json_type_null) {
+                json_object_put(obj);
+                continue;
+            }
+
+            if((prop_types[i] == json_type_double && json_object_get_type(obj) != json_type_int && json_object_get_type(obj) != json_type_double) ||
+                (prop_types[i] != json_type_double && json_object_get_type(obj) != prop_types[i])) {
+                snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s has an incorrect data type", all_props[i]);
+                log_log(str);
+                json_object_put(root);
+
+                for(j = 0; j < i; j++) {
+                    if(buffers[j]) {
+                        free(buffers[j]);
+                    }
+                }
+
+                return -1;
+            }
+
+            // Make sure numeric values are greater than 0 and strings are more
+            // than 0 characters in length
+            if(prop_types[i] == json_type_int) {
+                if(json_object_get_uint64(obj) == 0) {
+                    snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
+                    log_log(str);
+                    json_object_put(root);
+
+                    for(j = 0; j < i; j++) {
+                        if(buffers[j]) {
+                            free(buffers[j]);
+                        }
+                    }
+
+                    return -1;
+                }
+            } else if(prop_types[i] == json_type_double) {
+                if(json_object_get_double(obj) <= 0) {
+                    snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
+                    log_log(str);
+                    json_object_put(root);
+
+                    for(j = 0; j < i; j++) {
+                        if(buffers[j]) {
+                            free(buffers[j]);
+                        }
+                    }
+
+                    return -1;
+                }
+            } else if(prop_types[i] == json_type_string) {
+                // Go ahead and copy it over to a buffer
+                buffers[i] = malloc(json_object_get_string_len(obj) + 1);
+                if(!buffers[i]) {
+                    snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
+                    log_log(str);
+                    json_object_put(root);
+
+                    for(j = 0; j < i; j++) {
+                        if(buffers[j]) {
+                            free(buffers[j]);
+                        }
+                    }
+
+                    return -1;
+                }
+
+                strcpy(buffers[i], json_object_get_string(obj));
+
+                if(base64_props[i]) {
+                    // Base64-decode it and put that into buffers[i] instead
+                    buffer = base64_decode(buffers[i], json_object_get_string_len(obj), &buffer_lens[i]);
+                    if(!buffer) {
+                        snprintf(str, sizeof(str), "load_state(): Rejecting state file: unable to Base64-decode %s", all_props[i]);
+                        log_log(str);
+                        json_object_put(root);
+
+                        for(j = 0; j < i; j++) {
+                            if(buffers[j]) {
+                                free(buffers[j]);
+                            }
+                        }
+
+                        return -1;
+                    }
+
+                    free(buffers[i]);
+                    buffers[i] = buffer;
+                }
+            }
+
+            if(all_props[i] == detected_size_ptr) {
+                detected_size = json_object_get_uint64(obj);
+            } else if(all_props[i] == sector_size_ptr) {
+                sector_size = json_object_get_uint64(obj);
+            }
+
+        }
+    }
+
+    // Make sure our Base64-encoded strings are the correct length.
+    size_t expected_lens[] = {
+        -1,                  // reported_size_ptr
+        -1,                  // detected_size_ptr
+        -1,                  // sector_size_ptr
+        -1,                  // block_size_ptr
+        -1,                  // sequential_read_speed_ptr
+        -1,                  // sequential_write_speed_ptr
+        -1,                  // random_read_iops_ptr
+        -1,                  // random_write_iops_ptr
+        -1,                  // disable_curses_ptr
+        -1,                  // stats_file_ptr
+        -1,                  // log_file_ptr
+        -1,                  // lock_file_ptr
+        -1,                  // stats_interval_ptr
+                             // sector_map_ptr
+        (detected_size / sector_size) / 8 + (((detected_size / sector_size) % 8) ? 1 : 0),
+        BOD_MOD_BUFFER_SIZE, // bod_data_ptr
+        BOD_MOD_BUFFER_SIZE, // mod_data_ptr
+        -1,                  // rounds_completed_ptr
+        -1,                  // bytes_read_ptr
+        -1,                  // bytes_written_ptr
+        -1,                  // ffr_ptr
+        -1,                  // tpfr_ptr
+        -1                   // tfpfr_ptr
+    };
+
+    for(i = 0; all_props[i]; i++) {
+        if(base64_props[i] && (buffer_lens[i] != expected_lens[i])) {
+            snprintf(str, sizeof(str), "load_state(): Rejecting state file: %s contains the wrong amount of data", all_props[i]);
+            log_log(str);
+            json_object_put(root);
+
+            for(j = 0; all_props[j]; j++) {
+                if(buffers[j]) {
+                    free(buffers[j]);
+                }
+            }
+
+            return -1;
+        }
+    }
+
+    // Allocate memory for the sector map, which we'll need to unpack later
+    if(!(sector_display.sector_map = malloc(detected_size / sector_size))) {
+        snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
+        log_log(str);
+        json_object_put(root);
+
+        for(j = 0; all_props[j]; j++) {
+            if(buffers[j]) {
+                free(buffers[j]);
+            }
+        }
+    }
+
+    // Ok, let's go ahead and start populating everything.
+    // I've tried to craft this so that if we make it to this point, we can't
+    // fail -- we don't want to start overwriting global variables and then
+    // have something happen that would leave those variables in an
+    // inconsistent state.
+    for(i = 0; all_props[i]; i++) {
+        if(json_pointer_get(root, all_props[i], &obj)) {
+            continue;
+        }
+
+        if(json_object_get_type(obj) == json_type_null) {
+            continue;
+        }
+
+        if(prop_types[i] == json_type_int) {
+            if(all_props[i] == sector_size_ptr || all_props[i] == block_size_ptr) {
+                *((int *) destinations[i]) = json_object_get_int(obj);
+            } else if(all_props[i] == ffr_ptr || all_props[i] == tpfr_ptr || all_props[i] == tfpfr_ptr) {
+                *((ssize_t *) destinations[i]) = json_object_get_int64(obj);
+            } else {
+                *((size_t *) destinations[i]) = json_object_get_uint64(obj);
+            }
+        } else if(prop_types[i] == json_type_double) {
+            *((double *) destinations[i]) = json_object_get_double(obj);
+        } else if(prop_types[i] == json_type_boolean) {
+            *((char *) destinations[i]) = json_object_get_boolean(obj);
+        } else if(prop_types[i] == json_type_string) {
+            // bod_buffer and mod_buffer have to handled specially because
+            // we have statically allocated buffers for them
+            if(all_props[i] == bod_data_ptr || all_props[i] == mod_data_ptr) {
+                memcpy(destinations[i], buffers[i], BOD_MOD_BUFFER_SIZE);
+                free(buffers[i]);
+            } else if(all_props[i] == sector_map_ptr) {
+                // We need to unpack the sector map
+                for(k = 0; k < buffer_lens[i]; k++) {
+                    for(l = 0; l < 8; l++) {
+                        if((k + l) < buffer_lens[i]) {
+                            sector_display.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
+                        }
+                    }
+                }
+
+                free(buffers[i]);
+            } else {
+                *((char **) destinations[i]) = buffers[i];
+            }
+        }
+    }
+
+    json_object_put(root);
+    return 0;
+}
+
+/**
  * Log the given stats to the stats file.  The stats file is a CSV file with
  * the following columns:
  * 
@@ -275,7 +1108,7 @@ void log_log(char *msg) {
  * @param bad_sectors    The total number of sectors that have failed
  *                       verification so far.
  */
-void stats_log(size_t rounds, size_t bytes_written, size_t bytes_read, size_t bad_sectors) {
+void stats_log(size_t rounds, size_t bad_sectors) {
     double write_rate, read_rate, bad_sector_rate;
     time_t now = time(NULL);
     char *ctime_str;
@@ -291,18 +1124,22 @@ void stats_log(size_t rounds, size_t bytes_written, size_t bytes_read, size_t ba
 
     // Trim off the training newline from ctime_str
     ctime_str[strlen(ctime_str) - 1] = 0;
-    write_rate = ((double)(bytes_written - stress_test_stats.previous_bytes_written)) / (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 1000000);
-    read_rate = ((double)(bytes_read - stress_test_stats.previous_bytes_read)) / (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 1000000);
-    bad_sector_rate = ((double)(bad_sectors - stress_test_stats.previous_bad_sectors)) / (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 60000000);
+    write_rate = ((double)(state_data.bytes_written - stress_test_stats.previous_bytes_written)) /
+        (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 1000000);
+    read_rate = ((double)(state_data.bytes_read - stress_test_stats.previous_bytes_read)) /
+        (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 1000000);
+    bad_sector_rate = ((double)(bad_sectors - stress_test_stats.previous_bad_sectors)) /
+        (((double)timediff(stress_test_stats.previous_update_time, micronow)) / 60000000);
 
     fprintf(file_handles.stats_file, "%s,%lu,%lu,%lu,%0.2f,%lu,%lu,%0.2f,%lu,%lu,%0.2f\n", ctime_str, rounds,
-        bytes_written - stress_test_stats.previous_bytes_written, bytes_written, write_rate, bytes_read - stress_test_stats.previous_bytes_read, bytes_read,
+        state_data.bytes_written - stress_test_stats.previous_bytes_written, state_data.bytes_written, write_rate,
+        state_data.bytes_read - stress_test_stats.previous_bytes_read, state_data.bytes_read,
         read_rate, bad_sectors, device_stats.num_bad_sectors, bad_sector_rate);
     fflush(file_handles.stats_file);
 
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
-    stress_test_stats.previous_bytes_written = bytes_written;
-    stress_test_stats.previous_bytes_read = bytes_read;
+    stress_test_stats.previous_bytes_written = state_data.bytes_written;
+    stress_test_stats.previous_bytes_read = state_data.bytes_read;
     stress_test_stats.previous_bad_sectors = bad_sectors;
 }
 
@@ -1416,7 +2253,7 @@ int wait_for_device_reconnect() {
 
             dev_size = strtoull(dev_size_str, NULL, 10) * 512;
             if(dev_size != device_stats.reported_size_bytes) {
-                // Device's reported size doesn't match
+                // Device's reported size doesn't match 
                 snprintf(str, sizeof(str),
                     "wait_for_device_reconnect(): Rejecting device %s: device size doesn't match (this device = %'lu bytes, device we're looking for = "
                     "%'lu bytes)", dev_name, dev_size, device_stats.reported_size_bytes);
@@ -1489,6 +2326,15 @@ int wait_for_device_reconnect() {
     }
 }
 
+/**
+ * Waits for the lock on the lockfile to be released.
+ * 
+ * @param topwin  A pointer to the pointer to the window currently being shown
+ *                on the display.  The contents of the window will be saved,
+ *                and the window will be destroyed and recreated after the
+ *                lockfile is overwritten.  The new pointer to the window will
+ *                be stored in the location pointed to by topwin.
+ */
 void wait_for_file_lock(WINDOW **topwin) {
     WINDOW *window;
     FILE *memfile;
@@ -2274,7 +3120,7 @@ void io_error_during_speed_test(char write) {
     }, 1);
 }
 
-int probe_device_speeds(int fd, size_t num_sectors, size_t optimal_write_block_size) {
+int probe_device_speeds(int fd) {
     char *buf, wr, rd;
     size_t ctr, bytes_left, cur;
     ssize_t ret;
@@ -2308,7 +3154,7 @@ int probe_device_speeds(int fd, size_t num_sectors, size_t optimal_write_block_s
         return -1;
     }
 
-    if(!(buf = valloc(optimal_write_block_size < 4096 ? 4096 : optimal_write_block_size))) {
+    if(!(buf = valloc(device_stats.block_size < 4096 ? 4096 : device_stats.block_size))) {
         local_errno = errno;
         snprintf(str, sizeof(str), "probe_device_speeds(): valloc() returned an error: %s", strerror(local_errno));
         log_log(str);
@@ -2348,14 +3194,16 @@ int probe_device_speeds(int fd, size_t num_sectors, size_t optimal_write_block_s
             prev_secs = 0;
             while(secs < 30) {
                 if(wr) {
-                    fill_buffer(buf, rd ? 4096 : optimal_write_block_size);
+                    fill_buffer(buf, rd ? 4096 : device_stats.block_size);
                 }
 
-                bytes_left = rd ? 4096 : optimal_write_block_size;
+                bytes_left = rd ? 4096 : device_stats.block_size;
                 while(bytes_left && secs < 30) {
                     handle_key_inputs(window);
                     if(rd) {
-                        cur = ((((size_t) get_random_number()) << 32) | (get_random_number() & 0x7FFFFFFFFFFFFFFF)) % num_sectors;
+                        // Choose a random sector
+                        cur = (((((size_t) get_random_number()) << 32) | get_random_number()) & 0x7FFFFFFFFFFFFFFF) %
+                            (device_stats.num_sectors - (4096 / device_stats.sector_size));
                         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
                             erase_and_delete_window(window);
                             lseek_error_during_speed_test();
@@ -2529,8 +3377,7 @@ size_t get_slice_start(int slice_num) {
     return (device_stats.num_sectors / 16) * slice_num;
 }
 
-void print_device_summary(ssize_t first_failure_round, ssize_t ten_percent_failure_round, ssize_t twenty_five_percent_failure_round,
-    ssize_t fifty_percent_failure_round, ssize_t rounds_completed, int abort_reason) {
+void print_device_summary(ssize_t fifty_percent_failure_round, ssize_t rounds_completed, int abort_reason) {
     char buf[256];
     char messages[7][384];
     char *out_messages[7];
@@ -2555,18 +3402,23 @@ void print_device_summary(ssize_t first_failure_round, ssize_t ten_percent_failu
     out_messages[0] = messages[0];
     snprintf(messages[1], sizeof(messages[1]), "Number of read/write cycles completed: %'lu", rounds_completed);
     out_messages[1] = messages[1];
-    snprintf(messages[2], sizeof(messages[2]), "Read/write cycles to first failure   : %'lu", first_failure_round);
-    out_messages[2] = messages[2];
 
-    if(ten_percent_failure_round != -1) {
-        snprintf(messages[3], sizeof(messages[3]), "Read/write cycles to 10%% failure     : %'lu", ten_percent_failure_round);
+    if(state_data.first_failure_round != -1) {
+        snprintf(messages[2], sizeof(messages[2]), "Read/write cycles to first failure   : %'lu", state_data.first_failure_round);
+        out_messages[2] = messages[2];
+    } else {
+        out_messages[2] = NULL;
+    }
+
+    if(state_data.ten_percent_failure_round != -1) {
+        snprintf(messages[3], sizeof(messages[3]), "Read/write cycles to 10%% failure     : %'lu", state_data.ten_percent_failure_round);
         out_messages[3] = messages[3];
     } else {
         out_messages[3] = NULL;
     }
 
-    if(twenty_five_percent_failure_round != -1) {
-        snprintf(messages[4], sizeof(messages[4]), "Read/write cycles to 25%% failure     : %'lu", twenty_five_percent_failure_round);
+    if(state_data.twenty_five_percent_failure_round != -1) {
+        snprintf(messages[4], sizeof(messages[4]), "Read/write cycles to 25%% failure     : %'lu", state_data.twenty_five_percent_failure_round);
         out_messages[4] = messages[4];
     } else {
         out_messages[4] = NULL;
@@ -2696,6 +3548,7 @@ int parse_command_line_arguments(int argc, char **argv) {
         { "help"                       , no_argument      , NULL, 'h' },
         { "this-will-destroy-my-device", no_argument      , NULL, 2   },
         { "lockfile"                   , required_argument, NULL, 'f' },
+        { "state-file"                 , required_argument, NULL, 't' },
         { 0                            , 0                , 0   , 0   }
     };
 
@@ -2704,7 +3557,7 @@ int parse_command_line_arguments(int argc, char **argv) {
     program_options.stats_interval = 60;
 
     while(1) {
-        c = getopt_long(argc, argv, "bf:hi:l:ns:", options, &optindex);
+        c = getopt_long(argc, argv, "bf:hi:l:ns:t:", options, &optindex);
         if(c == -1) {
             break;
         }
@@ -2745,6 +3598,14 @@ int parse_command_line_arguments(int argc, char **argv) {
                 assert(program_options.stats_file = malloc(strlen(optarg) + 1));
                 strcpy(program_options.stats_file, optarg);
                 break;
+            case 't':
+                if(program_options.state_file) {
+                    printf("Only one state file option may be specified on the command line.\n");
+                    return -1;
+                }
+
+                assert(program_options.state_file = malloc(strlen(optarg) + 1));
+                strcpy(program_options.state_file, optarg);
         }
     }
 
@@ -2760,7 +3621,7 @@ int parse_command_line_arguments(int argc, char **argv) {
         }
     }
 
-    if(!program_options.device_name) {
+    if(!program_options.device_name && !program_options.state_file) {
         print_help(argv[0]);
         return -1;
     }
@@ -2774,16 +3635,15 @@ int parse_command_line_arguments(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-    int fd, block_size, cur_block_size, restart_slice, local_errno;
+    int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
-    size_t bytes_left_to_write, ret, cur_sector, total_bytes_written, total_bytes_read, middle_of_device;
+    size_t bytes_left_to_write, ret, cur_sector, middle_of_device;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf;
     struct timeval speed_start_time;
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
     size_t cur_slice, j;
-    ssize_t first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round;
     int *read_order;
     char str[192];
     struct timeval stats_cur_time;
@@ -2800,6 +3660,7 @@ int main(int argc, char **argv) {
     read_order = NULL;
     file_handles.lockfile_fd = -1;
     program_options.lock_file = NULL;
+    program_options.state_file = NULL;
     is_writing = -1;
 
     void cleanup() {
@@ -2839,17 +3700,22 @@ int main(int argc, char **argv) {
         if(read_order) {
             free(read_order);
         }
-    }
 
-    if(parse_command_line_arguments(argc, argv)) {
-        return -1;
-    }
+        if(program_options.log_file) {
+            free(program_options.log_file);
+        }
 
-    // If stdout isn't a tty (e.g., if output is being redirected to a file),
-    // then we should turn off the ncurses routines.
-    if(!program_options.no_curses && !isatty(1)) {
-        log_log("stdout isn't a tty -- turning off curses mode");
-        program_options.no_curses = 1;
+        if(program_options.stats_file) {
+            free(program_options.stats_file);
+        }
+
+        if(program_options.lock_file) {
+            free(program_options.lock_file);
+        }
+
+        if(program_options.state_file) {
+            free(program_options.state_file);
+        }
     }
 
     speed_qualifications_shown = 0;
@@ -2858,12 +3724,39 @@ int main(int argc, char **argv) {
     device_speeds.sequential_read_speed = 0;
     device_speeds.sequential_write_speed = 0;
     sector_display.sectors_per_block = 0;
+    state_data.first_failure_round = -1;
+    state_data.ten_percent_failure_round = -1;
+    state_data.twenty_five_percent_failure_round = -1;
     device_stats.is_fake_flash = FAKE_FLASH_UNKNOWN;
     num_rounds = -1;
+
+    if(parse_command_line_arguments(argc, argv)) {
+        return -1;
+    }
 
     // Zero out the stress test stats and the device stats
     bzero(&stress_test_stats, sizeof(stress_test_stats));
     bzero(&device_stats, sizeof(device_stats));
+
+    state_file_status = load_state();
+
+    // Recompute num_sectors now so that we don't crash when we call redraw_screen
+    if(!state_file_status) {
+        device_stats.num_sectors = device_stats.detected_size_bytes / device_stats.sector_size;
+    }
+
+    // If the user didn't specify a curses option on the command line, then use
+    // what's in the state file.
+    if(!program_options.no_curses) {
+        program_options.no_curses = program_options.orig_no_curses;
+    }
+
+    // If stdout isn't a tty (e.g., if output is being redirected to a file),
+    // then we should turn off the ncurses routines.
+    if(!program_options.no_curses && !isatty(1)) {
+        log_log("stdout isn't a tty -- turning off curses mode");
+        program_options.no_curses = 1;
+    }
 
     // Initialize ncurses
     if(!program_options.no_curses) {
@@ -2876,24 +3769,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    if(!program_options.dont_show_warning_message) {
-        log_log("WARNING: This program is DESTRUCTIVE.  It is designed to stress test storage");
-        log_log("devices (particularly flash media) to the point of failure.  If you let this");
-        log_log("program run for long enough, it WILL completely destroy the device and render it"),
-        log_log("completely unusable.  Do not use it on any storage devices that you care about.");
-        log_log("");
-        snprintf(str, sizeof(str), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
-        log_log(str);
-        log_log("not OK with this, you have 15 seconds to hit Ctrl+C before we start doing anything.");
+    if(state_file_status == -1) {
+        log_log("WARNING: There was a problem loading the state file.  The existing state file");
+        log_log("will be ignored (and eventually overwritten).  If you don't want this to happen,");
+        log_log("you have 15 seconds to hit Ctrl+C to abort the program.");
         
         window = message_window(stdscr, WARNING_TITLE, (char *[]) {
-            "This program is DESTRUCTIVE.  It is designed to stress test storage devices",
-            "(particularly flash media) to the point of failure.  If you let this program run",
-            "for long enough, it WILL completely destroy the device and render it completely",
-            "unusable.  Do not use it on any storage devices that you care about.",
-            "",
-            str,
-            "not OK with this, you have 15 seconds to hit Ctrl+C.",
+            "There was a problem loading the state file.  If you want to continue and just",
+            "ignore the existing state file, then you can ignore this message.  Otherwise,",
+            "you have 15 seconds to hit Ctrl+C.",
             NULL
         }, 0);
 
@@ -2901,14 +3785,51 @@ int main(int argc, char **argv) {
             for(j = 0; j < 15; j++) {
                 handle_key_inputs(window);
                 sleep(1);
-                mvwprintw(window, 7, 29, "%-2d", 14 - j);
+                mvwprintw(window, 3, 11, "%-2d", 14 - j);
                 wrefresh(window);
             }
         } else {
             sleep(15);
         }
 
-        erase_and_delete_window(window);
+        state_file_status = 1;
+    }
+
+    if(state_file_status == 1) {
+        if(!program_options.dont_show_warning_message) {
+            log_log("WARNING: This program is DESTRUCTIVE.  It is designed to stress test storage");
+            log_log("devices (particularly flash media) to the point of failure.  If you let this");
+            log_log("program run for long enough, it WILL completely destroy the device and render it"),
+            log_log("completely unusable.  Do not use it on any storage devices that you care about.");
+            log_log("");
+            snprintf(str, sizeof(str), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
+            log_log(str);
+            log_log("not OK with this, you have 15 seconds to hit Ctrl+C before we start doing anything.");
+            
+            window = message_window(stdscr, WARNING_TITLE, (char *[]) {
+                "This program is DESTRUCTIVE.  It is designed to stress test storage devices",
+                "(particularly flash media) to the point of failure.  If you let this program run",
+                "for long enough, it WILL completely destroy the device and render it completely",
+                "unusable.  Do not use it on any storage devices that you care about.",
+                "",
+                str,
+                "not OK with this, you have 15 seconds to hit Ctrl+C.",
+                NULL
+            }, 0);
+
+            if(window) {
+                for(j = 0; j < 15; j++) {
+                    handle_key_inputs(window);
+                    sleep(1);
+                    mvwprintw(window, 7, 29, "%-2d", 14 - j);
+                    wrefresh(window);
+                }
+            } else {
+                sleep(15);
+            }
+
+            erase_and_delete_window(window);
+        }
     }
 
     if(program_options.log_file) {
@@ -2932,6 +3853,11 @@ int main(int argc, char **argv) {
     }
 
     log_log("Program started.");
+
+    if(!state_file_status) {
+        snprintf(str, sizeof(str), "Resuming from state file %s", program_options.state_file);
+        log_log(str);
+    }
 
     if((file_handles.lockfile_fd = open(program_options.lock_file, O_WRONLY | O_CREAT)) == -1) {
         local_errno = errno;
@@ -2996,64 +3922,152 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    if(stat(program_options.device_name, &fs)) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(local_errno));
-        log_log(str);
-        log_log("Unable to test -- unable to pull stats on the device.");
-        snprintf(str, sizeof(str), "%s.  The device may have been removed, or you may not have permissions to", program_options.device_name);
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "We won't be able to test this device because we were unable to pull stats on",
-            str,
-            "open it.  (Make sure you're running this program with sudo.)",
-            "",
-            "This is the error we got while trying to call stat():",
-            strerror(local_errno),
-            NULL
-        }, 1);
+    if(!state_file_status) {
+        log_log("Attempting to locate device described in state file");
+        window = message_window(stdscr, NULL, (char *[]) {
+            "Finding device described in state file..."
+        }, 0);
 
-        cleanup();
-        return -1;
+        fd = find_device();
+
+        erase_and_delete_window(window);
+
+        if(fd == -1) {
+            log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                "An error occurred while trying to locate the device described in the state file.",
+                "(Make sure you're running this program with sudo.)",
+                NULL
+            }, 1);
+
+            cleanup();
+            return -1;
+        } else if(fd == -2) {
+            log_log("Multiple devices found that match the data in the state file.  Please specify which device you want to test on the command line.");
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                "There are multiple devices that match the data in the state file.  Please",
+                "specify which device you want to test on the command line.",
+                NULL
+            }, 1);
+            
+            cleanup();
+            return -1;
+        } else if(fd == -3 || (fd == 0 && program_options.device_name)) {
+            log_log("The device specified on the command line does not match the device described in the state file.");
+            log_log("Please remove the device from the command line or specify a different device.");
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                "The device you specified on the command line does not match the device described",
+                "in the state file.  If you run this program again without the device name, we'll",
+                "figure out which device to use automatically.  Otherwise, provide a different",
+                "device on the command line.",
+                NULL
+            }, 1);
+
+            cleanup();
+            return -1;
+        } else if(fd == 0) {
+            log_log("No devices could be found that match the data in the state file.  Attach one now...");
+            window = message_window(stdscr, "No devices found", (char *[]) {
+                "No devices could be found that match the data in the state file.  If you haven't",
+                "plugged the device in yet, go ahead and do so now.  Otherwisse, you can hit",
+                "Ctrl+C now to abort the program.",
+                NULL
+            }, 0);
+
+            fd = wait_for_device_reconnect();
+
+            if(fd == -1) {
+                log_log("An error occurred while waiting for the device to be reconnected.");
+                message_window(stdscr, ERROR_TITLE, (char *[]) {
+                    "An error occurred while waiting for you to reconnect the device.  Sorry about",
+                    "that.",
+                    NULL
+                }, 1);
+
+                cleanup();
+                return -1;
+            }
+        }
+
+        if(fstat(fd, &fs)) {
+            local_errno = errno;
+            snprintf(str, sizeof(str), "Got the following error while calling fstat() on %s: %s\n", program_options.device_name, strerror(local_errno));
+            log_log(str);
+            log_log("Unable to test -- unable to pull stats on the device.");
+
+            snprintf(str, sizeof(str), "We won't be able to test %s because we weren't able to pull stats", program_options.device_name);
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                str,
+                "it.  The device may have been removed, or you may not have permissions to open",
+                "it.  (Make sure you're running this program with sudo.)",
+                "",
+                "This is the error we got while trying to call fstat():",
+                strerror(local_errno),
+                NULL
+            }, 1);
+
+            cleanup();
+            return -1;
+        }
+    } else {
+        if(stat(program_options.device_name, &fs)) {
+            local_errno = errno;
+            snprintf(str, sizeof(str), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(local_errno));
+            log_log(str);
+            log_log("Unable to test -- unable to pull stats on the device.");
+            snprintf(str, sizeof(str), "%s.  The device may have been removed, or you may not have permissions to", program_options.device_name);
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                "We won't be able to test this device because we were unable to pull stats on",
+                str,
+                "open it.  (Make sure you're running this program with sudo.)",
+                "",
+                "This is the error we got while trying to call stat():",
+                strerror(local_errno),
+                NULL
+            }, 1);
+
+            cleanup();
+            return -1;
+        }
+
+        if(!S_ISBLK(fs.st_mode)) {
+            snprintf(str, sizeof(str), "Unable to test -- %s is not a block device", program_options.device_name);
+            log_log(str);
+            snprintf(str, sizeof(str), "We won't be able to test with %s because it isn't a block device.  You must", program_options.device_name);
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                str,
+                "provide a block device to test with.",
+                NULL
+            }, 1);
+
+            cleanup();
+            return -1;
+        }
+
+        if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
+            local_errno = errno;
+            snprintf(str, sizeof(str), "Failed to open %s: %s", program_options.device_name, strerror(local_errno));
+            log_log(str);
+            log_log("Unable to test -- couldn't open device.  Make sure you run this program as sudo.");
+
+            snprintf(str, sizeof(str), "We won't be able to test %s because we couldn't open the device.", program_options.device_name);
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                str,
+                "The device might have gone away, or you might not have permissions to open it.",
+                "(Make sure you run this program as sudo.)",
+                "",
+                "Here's the error we got while trying to open the device:",
+                strerror(local_errno),
+                NULL
+            }, 1);
+
+            cleanup();
+            return -1;
+        }
     }
-
-    if((fs.st_mode & S_IFMT) != S_IFBLK) {
-        snprintf(str, sizeof(str), "Unable to test -- %s is not a block device", program_options.device_name);
-        log_log(str);
-        snprintf(str, sizeof(str), "We won't be able to test with %s because it isn't a block device.  You must", program_options.device_name);
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            str,
-            "provide a block device to test with.",
-            NULL
-        }, 1);
-
-        cleanup();
-        return -1;
-    }
-
-    if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "Failed to open %s: %s", program_options.device_name, strerror(local_errno));
-        log_log(str);
-        log_log("Unable to test -- couldn't open device.  Make sure you run this program as sudo.");
-
-        snprintf(str, sizeof(str), "We won't be able to test %s because we couldn't open the device.", program_options.device_name);
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            str,
-            "The device might have gone away, or you might not have permissions to open it.",
-            "(Make sure you run this program as sudo.)",
-            "",
-            "Here's the error we got while trying to open the device:",
-            strerror(local_errno),
-            NULL
-        }, 1);
-
-        cleanup();
-        return -1;
-    }
-
 
     if(ioctl(fd, BLKGETSIZE64, &device_stats.reported_size_bytes) || ioctl(fd, BLKSSZGET, &device_stats.sector_size) ||
-        ioctl(fd, BLKSECTGET, &max_sectors_per_request)) {
+        ioctl(fd, BLKSECTGET, &max_sectors_per_request) || ioctl(fd, BLKPBSZGET, &device_stats.physical_sector_size)) {
         local_errno = errno;
         snprintf(str, sizeof(str), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(local_errno));
         log_log(str);
@@ -3071,15 +4085,21 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    device_stats.num_sectors = device_stats.reported_size_bytes / device_stats.sector_size;
     device_stats.device_num = fs.st_rdev;
+
+    if(state_file_status) {
+        device_stats.num_sectors = device_stats.reported_size_bytes / device_stats.sector_size;
+    }
+
     device_stats.preferred_block_size = fs.st_blksize;
     device_stats.max_request_size = device_stats.sector_size * max_sectors_per_request;
 
     log_log("Device info reported by kernel:");
     snprintf(str, sizeof(str), "  Reported size            : %'lu bytes", device_stats.reported_size_bytes);
     log_log(str);
-    snprintf(str, sizeof(str), "  Sector size              : %'u bytes", device_stats.sector_size);
+    snprintf(str, sizeof(str), "  Sector size (logical)    : %'u bytes", device_stats.sector_size);
+    log_log(str);
+    snprintf(str, sizeof(str), "  Sector size (physical)   : %'u bytes", device_stats.physical_sector_size);
     log_log(str);
     snprintf(str, sizeof(str), "  Total sectors (derived)  : %'lu", device_stats.num_sectors);
     log_log(str);
@@ -3090,60 +4110,70 @@ int main(int argc, char **argv) {
     mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.reported_size_bytes);
     refresh();
 
-    profile_random_number_generator();
+    if(state_file_status) {
+        profile_random_number_generator();
 
-    if(program_options.probe_for_optimal_block_size) {
+        if(program_options.probe_for_optimal_block_size) {
+            wait_for_file_lock(NULL);
+
+            if((device_stats.block_size = probe_for_optimal_block_size(fd)) <= 0) {
+                device_stats.block_size = device_stats.sector_size * max_sectors_per_request;
+                snprintf(str, sizeof(str), "Unable to probe for optimal block size.  Falling back to derived block size (%'d bytes).", device_stats.block_size);
+                log_log(str);
+            }
+        } else {
+            device_stats.block_size = device_stats.sector_size * max_sectors_per_request;
+        }
+
+        sectors_per_block = device_stats.block_size / device_stats.sector_size;
+
         wait_for_file_lock(NULL);
 
-        if((block_size = probe_for_optimal_block_size(fd)) <= 0) {
-            block_size = device_stats.sector_size * max_sectors_per_request;
-            snprintf(str, sizeof(str), "Unable to probe for optimal block size.  Falling back to derived block size (%'d bytes).", block_size);
+        if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, device_stats.block_size))) {
+            snprintf(str, sizeof(str), "Assuming that the kernel-reported device size (%'lu bytes) is correct.\n", device_stats.reported_size_bytes);
             log_log(str);
-        }
-    } else {
-        block_size = device_stats.sector_size * max_sectors_per_request;
-    }
 
-    sectors_per_block = block_size / device_stats.sector_size;
+            middle_of_device = device_stats.reported_size_bytes / 2;
 
-    wait_for_file_lock(NULL);
-
-    if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, block_size))) {
-        snprintf(str, sizeof(str), "Assuming that the kernel-reported device size (%'lu bytes) is correct.\n", device_stats.reported_size_bytes);
-        log_log(str);
-        if(!program_options.no_curses) {
-            mvaddstr(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "Unknown");
-            mvaddstr(IS_FAKE_FLASH_DISPLAY_Y       , IS_FAKE_FLASH_DISPLAY_X       , "Unknown");
-        }
-    } else {
-        device_stats.num_sectors = device_stats.detected_size_bytes / device_stats.sector_size;
-        if(device_stats.detected_size_bytes == device_stats.reported_size_bytes) {
-            device_stats.is_fake_flash = FAKE_FLASH_NO;
+            if(!program_options.no_curses) {
+                mvaddstr(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "Unknown");
+                mvaddstr(IS_FAKE_FLASH_DISPLAY_Y       , IS_FAKE_FLASH_DISPLAY_X       , "Unknown");
+            }
         } else {
-            device_stats.is_fake_flash = FAKE_FLASH_YES;
-        }
-
-        if(!program_options.no_curses) {
-            mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.detected_size_bytes);
-            if(device_stats.detected_size_bytes != device_stats.reported_size_bytes) {
-                attron(COLOR_PAIR(RED_ON_BLACK));
-                mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Yes");
-                attroff(COLOR_PAIR(RED_ON_BLACK));
+            device_stats.num_sectors = device_stats.detected_size_bytes / device_stats.sector_size;
+            if(device_stats.detected_size_bytes == device_stats.reported_size_bytes) {
+                device_stats.is_fake_flash = FAKE_FLASH_NO;
             } else {
-                attron(COLOR_PAIR(GREEN_ON_BLACK));
-                mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Probably not");
-                attroff(COLOR_PAIR(GREEN_ON_BLACK));
+                device_stats.is_fake_flash = FAKE_FLASH_YES;
+            }
+
+            middle_of_device = device_stats.detected_size_bytes / 2;
+
+            if(!program_options.no_curses) {
+                mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.detected_size_bytes);
+                if(device_stats.detected_size_bytes != device_stats.reported_size_bytes) {
+                    attron(COLOR_PAIR(RED_ON_BLACK));
+                    mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Yes");
+                    attroff(COLOR_PAIR(RED_ON_BLACK));
+                } else {
+                    attron(COLOR_PAIR(GREEN_ON_BLACK));
+                    mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Probably not");
+                    attroff(COLOR_PAIR(GREEN_ON_BLACK));
+                }
             }
         }
+
+        refresh();
+
+        wait_for_file_lock(NULL);
+
+        probe_device_speeds(fd);
+    } else {
+        device_stats.is_fake_flash = (device_stats.reported_size_bytes == device_stats.detected_size_bytes) ? FAKE_FLASH_NO : FAKE_FLASH_YES;
+        sectors_per_block = device_stats.block_size / device_stats.sector_size;
+        middle_of_device = device_stats.detected_size_bytes / 2;
+        redraw_screen();
     }
-
-    refresh();
-
-    wait_for_file_lock(NULL);
-
-    probe_device_speeds(fd, device_stats.num_sectors, block_size);
-
-    middle_of_device = device_stats.detected_size_bytes / 2;
 
     // Start stress testing the device.
     //
@@ -3160,10 +4190,13 @@ int main(int argc, char **argv) {
     //      sector-by-sector basis.  If they match, then the sector is good.
     //  - Repeat until at least 50% of the sectors read result in mismatches.
     current_seed = initial_seed = time(NULL);
-    init_random_number_generator(initial_seed);
-    first_failure_round = ten_percent_failure_round = twenty_five_percent_failure_round = -1;
+    if(state_file_status) {
+        state_data.first_failure_round = state_data.ten_percent_failure_round = state_data.twenty_five_percent_failure_round = -1;
+    }
 
-    buf = (char *) valloc(block_size);
+    init_random_number_generator(initial_seed);
+
+    buf = (char *) valloc(device_stats.block_size);
     if(!buf) {
         local_errno = errno;
         snprintf(str, sizeof(str), "valloc() failed: %s", strerror(local_errno));
@@ -3182,7 +4215,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    compare_buf = (char *) valloc(block_size);
+    compare_buf = (char *) valloc(device_stats.block_size);
     if(!compare_buf) {
         local_errno = errno;
         snprintf(str, sizeof(str), "valloc() failed: %s", strerror(local_errno));
@@ -3227,18 +4260,48 @@ int main(int argc, char **argv) {
     device_stats.bytes_since_last_status_update = 0;
     bzero(&stress_test_stats, sizeof(stress_test_stats));
 
-    log_log("Beginning stress test");
+    if(state_file_status) {
+        log_log("Beginning stress test");
+        num_rounds = state_data.bytes_written = state_data.bytes_read = 0;
+    } else {
+        // Count up the number of bad sectors and update device_stats.num_bad_sectors
+        for(j = 0; j < device_stats.num_sectors; j++) {
+            if(sector_display.sector_map[j] & 0x01) {
+                device_stats.num_bad_sectors++;
+            }
+        }
+
+        stress_test_stats.previous_bytes_written = state_data.bytes_written;
+        stress_test_stats.previous_bytes_read = state_data.bytes_read;
+	stress_test_stats.previous_bad_sectors = device_stats.num_bad_sectors;
+
+        snprintf(str, sizeof(str), "Resuming stress test from round %'lu", num_rounds + 1);
+        log_log(str);
+    }
+
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
     stats_cur_time = stress_test_stats.previous_update_time;
 
-    for(num_rounds = 0, num_bad_sectors = 0, total_bytes_written = 0, total_bytes_read = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2);
-        num_rounds++, num_bad_sectors = 0) {
+    for(num_bad_sectors = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0) {
+        if(num_rounds > 0) {
+            if(save_state()) {
+                log_log("Error creating save state, disabling save stating");
+                message_window(stdscr, "WARNING", (char *[]) {
+                    "An error occurred while trying to save the program state.  Save stating has been"
+                    "disabled.",
+                    NULL
+                }, 1);
+
+                free(program_options.state_file);
+                program_options.state_file = NULL;
+            }
+        }
 
         is_writing = 1;
         if(!program_options.no_curses) {
             j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
-            mvaddstr(ROUNDNUM_DISPLAY_Y , ROUNDNUM_DISPLAY_X(j), str);
-            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X  , " Writing ");
+            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), str);
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Writing ");
         }
 
         // Reset the sector map.
@@ -3278,8 +4341,8 @@ int main(int argc, char **argv) {
                 }
 
                 if(fd == -1) {
-                    print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                        device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
+                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                        ABORT_REASON_SEEK_ERROR);
 
                     cleanup();
                     return 0;
@@ -3300,9 +4363,9 @@ int main(int argc, char **argv) {
                 // Use bytes_left_to_write to hold the bytes left to read
                 if((cur_sector + sectors_per_block) > last_sector) {
                     cur_sectors_per_block = last_sector - cur_sector;
-		    cur_block_size = cur_sectors_per_block * device_stats.sector_size;
+                    cur_block_size = cur_sectors_per_block * device_stats.sector_size;
                 } else {
-                    cur_block_size = block_size;
+                    cur_block_size = device_stats.block_size;
                     cur_sectors_per_block = sectors_per_block;
                 }
 
@@ -3336,8 +4399,8 @@ int main(int argc, char **argv) {
                         }
 
                         if(fd == -1) {
-                            print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                                device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                ABORT_REASON_WRITE_ERROR);
 
                             return 0;
                         } else {
@@ -3356,10 +4419,25 @@ int main(int argc, char **argv) {
                             ((cur_sector * device_stats.sector_size) + ret) > BOD_MOD_BUFFER_SIZE ?
                             BOD_MOD_BUFFER_SIZE - (cur_sector * device_stats.sector_size) : ret
                         );
+
+                        // If we updated the BOD buffer, we also need to
+                        // savestate.
+                        if(save_state()) {
+                            log_log("Error creating save state, disabling save stating");
+                            message_window(stdscr, "WARNING", (char *[]) {
+                                "An error occurred while trying to save the program state.  Save stating has been"
+                                "disabled.",
+                                NULL
+                            }, 1);
+
+                            free(program_options.state_file);
+                            program_options.state_file = NULL;
+                        }
+
                     }
 
                     // Do we need to update the MOD buffer?
-                    if(((cur_sector * device_stats.sector_size) >= middle_of_device) && (((cur_sector * device_stats.sector_size) +
+                    if(((cur_sector * device_stats.sector_size) >= middle_of_device) && (((cur_sector * device_stats.sector_size) + 
                         (cur_block_size - bytes_left_to_write)) < (middle_of_device + BOD_MOD_BUFFER_SIZE))) {
                         memcpy(
                             mod_buffer + ((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write) - middle_of_device),
@@ -3367,22 +4445,40 @@ int main(int argc, char **argv) {
                             ((cur_sector * device_stats.sector_size) + ret) > (middle_of_device + BOD_MOD_BUFFER_SIZE) ?
                             BOD_MOD_BUFFER_SIZE - ((cur_sector * device_stats.sector_size) - middle_of_device) : ret
                         );
+
+                        // If we updated the MOD buffer, we also need to
+                        // savestate.
+                        if(save_state()) {
+                            log_log("Error creating save state, disabling save stating");
+                            message_window(stdscr, "WARNING", (char *[]) {
+                                "An error occurred while trying to save the program state.  Save stating has been"
+                                "disabled.",
+                                NULL
+                            }, 1);
+
+                            free(program_options.state_file);
+                            program_options.state_file = NULL;
+                        }
                     }
 
                     bytes_left_to_write -= ret;
                     device_stats.bytes_since_last_status_update += ret;
-                    total_bytes_written += ret;
+                    state_data.bytes_written += ret;
 
                     print_status_update(cur_sector, num_rounds);
+
                 }
 
+                if(restart_slice) {
+                    break;
+                }
 
                 mark_sectors_written(cur_sector, cur_sector + cur_sectors_per_block);
                 refresh();
 
                 assert(!gettimeofday(&stats_cur_time, NULL));
                 if(timediff(stress_test_stats.previous_update_time, stats_cur_time) >= (program_options.stats_interval * 1000000)) {
-                    stats_log(num_rounds, total_bytes_written, total_bytes_read, device_stats.num_bad_sectors);
+                    stats_log(num_rounds, device_stats.num_bad_sectors);
                 }
 
             }
@@ -3414,8 +4510,7 @@ int main(int argc, char **argv) {
             srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
 
             if(lseek(fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, SEEK_SET) == -1) {
-                print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                    device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
+                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
 
                 cleanup();
                 return 0;
@@ -3434,10 +4529,11 @@ int main(int argc, char **argv) {
                     cur_sectors_per_block = last_sector - cur_sector;
                     cur_block_size = cur_sectors_per_block * device_stats.sector_size;
                 } else {
-                    cur_block_size = block_size;
+                    cur_block_size = device_stats.block_size;
                     cur_sectors_per_block = sectors_per_block;
                 }
 
+                // Regenerate the data we originally wrote to the device.
                 fill_buffer(buf, cur_block_size);
                 bytes_left_to_write = cur_block_size;
 
@@ -3468,8 +4564,8 @@ int main(int argc, char **argv) {
                         }
 
                         if(fd == -1) {
-                            print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                                device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_READ_ERROR);
+                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                ABORT_REASON_READ_ERROR);
 
                             cleanup();
                             return 0;
@@ -3480,9 +4576,9 @@ int main(int argc, char **argv) {
                         // to where we were and repeat the read.
                         if(lseek(fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), SEEK_SET) == -1) {
                             // I guess just give up now
-                            print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round,
-                                device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_READ_ERROR);
-
+                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                ABORT_REASON_SEEK_ERROR);
+                            
                             cleanup();
                             return 0;
                         }
@@ -3498,7 +4594,7 @@ int main(int argc, char **argv) {
                 }
 
                 mark_sectors_read(cur_sector, cur_sector + cur_sectors_per_block);
-                total_bytes_read += cur_block_size;
+                state_data.bytes_read += cur_block_size;
 
                 // Compare
                 for(j = 0; j < cur_block_size; j += device_stats.sector_size) {
@@ -3516,7 +4612,7 @@ int main(int argc, char **argv) {
 
                 assert(!gettimeofday(&stats_cur_time, NULL));
                 if(timediff(stress_test_stats.previous_update_time, stats_cur_time) >= (program_options.stats_interval * 1000000)) {
-                    stats_log(num_rounds, total_bytes_written, total_bytes_read, device_stats.num_bad_sectors);
+                    stats_log(num_rounds, device_stats.num_bad_sectors);
                 }
             }
         }
@@ -3533,26 +4629,27 @@ int main(int argc, char **argv) {
             log_log(str);
         } else {
             snprintf(str, sizeof(str), "Round %'lu complete, %'lu new bad sectors found this round; %'lu bad sectors discovered total (%0.2f%% of total)",
-                num_rounds + 1, num_bad_sectors, device_stats.num_bad_sectors, (((double) num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
+                num_rounds + 1, num_bad_sectors, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
             log_log(str);
 
-            if(first_failure_round == -1) {
-                first_failure_round = num_rounds;
+            if(state_data.first_failure_round == -1) {
+                state_data.first_failure_round = num_rounds;
             }
 
-            if(((((double)device_stats.num_bad_sectors) / ((double)device_stats.num_sectors)) > 0.1) && (ten_percent_failure_round == -1)) {
-                ten_percent_failure_round = num_rounds;
+            if(((((double)device_stats.num_bad_sectors) / ((double)device_stats.num_sectors)) > 0.1) && (state_data.ten_percent_failure_round == -1)) {
+                state_data.ten_percent_failure_round = num_rounds;
             }
 
-            if(((((double)device_stats.num_bad_sectors) / ((double)device_stats.num_sectors)) > 0.25) && (twenty_five_percent_failure_round == -1)) {
-                twenty_five_percent_failure_round = num_rounds;
+            if(((((double)device_stats.num_bad_sectors) / ((double)device_stats.num_sectors)) > 0.25) &&
+                (state_data.twenty_five_percent_failure_round == -1)) {
+                state_data.twenty_five_percent_failure_round = num_rounds;
             }
         }
     }
 
-    print_device_summary(first_failure_round, ten_percent_failure_round, twenty_five_percent_failure_round, num_rounds - 1, num_rounds,
-        ABORT_REASON_FIFTY_PERCENT_FAILURE);
+    print_device_summary(num_rounds - 1, num_rounds, ABORT_REASON_FIFTY_PERCENT_FAILURE);
 
     cleanup();
     return 0;
 }
+
