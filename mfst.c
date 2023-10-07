@@ -1482,19 +1482,19 @@ void print_class_marking_qualifications() {
         attroff(A_BOLD);
         
         if(device_speeds.sequential_write_speed) {
-            if(device_speeds.sequential_write_speed >= 2097152) {
+            if(device_speeds.sequential_write_speed >= 2000000) {
                 print_with_color(SPEED_CLASS_2_RESULT_Y, SPEED_CLASS_2_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
                 print_with_color(SPEED_CLASS_2_RESULT_Y, SPEED_CLASS_2_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
-            if(device_speeds.sequential_write_speed >= 4194304) {
+            if(device_speeds.sequential_write_speed >= 4000000) {
                 print_with_color(SPEED_CLASS_4_RESULT_Y, SPEED_CLASS_4_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
                 print_with_color(SPEED_CLASS_4_RESULT_Y, SPEED_CLASS_4_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
-            if(device_speeds.sequential_write_speed >= 6291456) {
+            if(device_speeds.sequential_write_speed >= 6000000) {
                 print_with_color(SPEED_CLASS_6_RESULT_Y, SPEED_CLASS_6_RESULT_X, GREEN_ON_BLACK, "Yes    ");
                 print_with_color(SPEED_V6_RESULT_Y     , SPEED_V6_RESULT_X     , GREEN_ON_BLACK, "Yes    ");
             } else {
@@ -1502,7 +1502,7 @@ void print_class_marking_qualifications() {
                 print_with_color(SPEED_V6_RESULT_Y     , SPEED_V6_RESULT_X     , RED_ON_BLACK, "No     ");
             }
 
-            if(device_speeds.sequential_write_speed >= 10485760) {
+            if(device_speeds.sequential_write_speed >= 10000000) {
                 print_with_color(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, GREEN_ON_BLACK, "Yes    ");
                 print_with_color(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , GREEN_ON_BLACK, "Yes    ");
                 print_with_color(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , GREEN_ON_BLACK, "Yes    ");
@@ -1512,7 +1512,7 @@ void print_class_marking_qualifications() {
                 print_with_color(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , RED_ON_BLACK, "No     ");
             }
 
-            if(device_speeds.sequential_write_speed >= 31457280) {
+            if(device_speeds.sequential_write_speed >= 30000000) {
                 print_with_color(SPEED_U3_RESULT_Y , SPEED_U3_RESULT_X , GREEN_ON_BLACK, "Yes    ");
                 print_with_color(SPEED_V30_RESULT_Y, SPEED_V30_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
@@ -1520,13 +1520,13 @@ void print_class_marking_qualifications() {
                 print_with_color(SPEED_V30_RESULT_Y, SPEED_V30_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
-            if(device_speeds.sequential_write_speed >= 62914560) {
+            if(device_speeds.sequential_write_speed >= 60000000) {
                 print_with_color(SPEED_V60_RESULT_Y, SPEED_V60_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
                 print_with_color(SPEED_V60_RESULT_Y, SPEED_V60_RESULT_X, RED_ON_BLACK, "No     ");
             }
 
-            if(device_speeds.sequential_write_speed >= 94371840) {
+            if(device_speeds.sequential_write_speed >= 90000000) {
                 print_with_color(SPEED_V90_RESULT_Y, SPEED_V90_RESULT_X, GREEN_ON_BLACK, "Yes    ");
             } else {
                 print_with_color(SPEED_V90_RESULT_Y, SPEED_V90_RESULT_X, RED_ON_BLACK, "No     ");
@@ -3300,29 +3300,29 @@ int probe_device_speeds(int fd) {
     // repaint them on the display, and we don't want to print them to the log
     // a second time if they've already been printed out.
     log_log("probe_device_speeds(): Speed test results:");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 2 marking : %s", device_speeds.sequential_write_speed >= 2097152 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 2 marking : %s", device_speeds.sequential_write_speed >= 2000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 4 marking : %s", device_speeds.sequential_write_speed >= 4194304 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 4 marking : %s", device_speeds.sequential_write_speed >= 4000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 6 marking : %s", device_speeds.sequential_write_speed >= 6291456 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 6 marking : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 10 marking: %s", device_speeds.sequential_write_speed >= 10485760 ? "Yes" : "No");
-    log_log(str);
-    log_log("probe_device_speeds():");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for U1 marking      : %s", device_speeds.sequential_write_speed >= 10485760 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for U3 marking      : %s", device_speeds.sequential_write_speed >= 31457280 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 10 marking: %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
     log_log(str);
     log_log("probe_device_speeds():");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V6 marking      : %s", device_speeds.sequential_write_speed >= 6291456 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for U1 marking      : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V10 marking     : %s", device_speeds.sequential_write_speed >= 10485760 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for U3 marking      : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V30 marking     : %s", device_speeds.sequential_write_speed >= 31457280 ? "Yes" : "No");
+    log_log("probe_device_speeds():");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V6 marking      : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V60 marking     : %s", device_speeds.sequential_write_speed >= 62914560 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V10 marking     : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
     log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V90 marking     : %s", device_speeds.sequential_write_speed >= 94371840 ? "Yes" : "No");
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V30 marking     : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
+    log_log(str);
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V60 marking     : %s", device_speeds.sequential_write_speed >= 60000000 ? "Yes" : "No");
+    log_log(str);
+    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V90 marking     : %s", device_speeds.sequential_write_speed >= 90000000 ? "Yes" : "No");
     log_log(str);
     log_log("probe_device_speeds():");
     snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for A1 marking      : %s",
