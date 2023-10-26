@@ -3643,6 +3643,7 @@ int main(int argc, char **argv) {
     char *buf, *compare_buf;
     struct timeval speed_start_time;
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
+    size_t num_bad_sectors_this_round, num_good_sectors_this_round;
     size_t cur_slice, j;
     int *read_order;
     char str[192];
@@ -4282,7 +4283,7 @@ int main(int argc, char **argv) {
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
     stats_cur_time = stress_test_stats.previous_update_time;
 
-    for(num_bad_sectors = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0) {
+    for(num_bad_sectors = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
         if(num_rounds > 0) {
             if(save_state()) {
                 log_log("Error creating save state, disabling save stating");
@@ -4600,11 +4601,16 @@ int main(int argc, char **argv) {
                 for(j = 0; j < cur_block_size; j += device_stats.sector_size) {
                     handle_key_inputs(NULL);
                     if(memcmp(buf + j, compare_buf + j, device_stats.sector_size)) {
+                        num_bad_sectors_this_round++;
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             num_bad_sectors++;
                         }
 
                         mark_sector_bad(cur_sector + (j / device_stats.sector_size));
+                    } else {
+		      if(is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
+                            num_good_sectors_this_round++;
+                        }
                     }
                 }
 
@@ -4623,11 +4629,22 @@ int main(int argc, char **argv) {
         if(!num_bad_sectors && !device_stats.num_bad_sectors) {
             snprintf(str, sizeof(str), "Round %'lu complete, no bad sectors detected", num_rounds + 1);
             log_log(str);
-        } else if(!num_bad_sectors && device_stats.num_bad_sectors) {
-            snprintf(str, sizeof(str), "Round %'lu complete, no new bad sectors detected this round; %'lu bad sectors discovered total (%0.2f%% of total)",
-                num_rounds + 1, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors / ((double) device_stats.num_sectors))) * 100);
+        } else /* if(!num_bad_sectors && device_stats.num_bad_sectors) */ {
+            snprintf(str, sizeof(str), "Round %'lu complete; round stats:", num_rounds + 1);
             log_log(str);
-        } else {
+
+            snprintf(str, sizeof(str), "  Sectors that failed verification this round: %'lu", num_bad_sectors_this_round);
+            log_log(str);
+
+            snprintf(str, sizeof(str), "  New bad sectors this round: %'lu", num_bad_sectors);
+            log_log(str);
+
+	    snprintf(str, sizeof(str), "  Sectors marked bad in a previous round that passed verification this round: %'lu", num_good_sectors_this_round);
+	    log_log(str);
+
+	    snprintf(str, sizeof(str), "  Total bad sectors: %'lu (%0.2f%% of total)", device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
+	    log_log(str);
+        } /* else {
             snprintf(str, sizeof(str), "Round %'lu complete, %'lu new bad sectors found this round; %'lu bad sectors discovered total (%0.2f%% of total)",
                 num_rounds + 1, num_bad_sectors, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
             log_log(str);
@@ -4644,7 +4661,7 @@ int main(int argc, char **argv) {
                 (state_data.twenty_five_percent_failure_round == -1)) {
                 state_data.twenty_five_percent_failure_round = num_rounds;
             }
-        }
+	    } */
     }
 
     print_device_summary(num_rounds - 1, num_rounds, ABORT_REASON_FIFTY_PERCENT_FAILURE);
