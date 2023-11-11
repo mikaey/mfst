@@ -3988,6 +3988,8 @@ int main(int argc, char **argv) {
 
             fd = wait_for_device_reconnect();
 
+            erase_and_delete_window(window);
+
             if(fd == -1) {
                 log_log("An error occurred while waiting for the device to be reconnected.");
                 message_window(stdscr, ERROR_TITLE, (char *[]) {
