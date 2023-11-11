@@ -2195,6 +2195,7 @@ int wait_for_device_reconnect() {
 
     udev_handle = udev_new();
     if(!udev_handle) {
+        free(buffer);
         return -1;
     }
 
