@@ -2724,15 +2724,23 @@ void print_status_update(size_t cur_sector, size_t num_rounds) {
 
 int write_data_to_device(int fd, void *buf, size_t len, size_t optimal_block_size) {
     size_t block_size, bytes_left, block_bytes_left;
+    char *aligned_buf;
     ssize_t ret;
+
+    if(!(aligned_buf = (char *) valloc(len))) {
+      return -1;
+    }
 
     block_size = len > optimal_block_size ? optimal_block_size : len;
 
     bytes_left = len;
     while(bytes_left) {
-        block_bytes_left = block_size;
+        block_bytes_left = block_size > bytes_left ? bytes_left : block_size;
         while(block_bytes_left) {
-            if((ret = write(fd, ((char *) buf) + (len - bytes_left), block_bytes_left)) == -1) {
+            // Make sure the data is in an aligned buffer
+            memcpy(aligned_buf, ((char *) buf) + (len - bytes_left), block_bytes_left);
+            if((ret = write(fd, aligned_buf, block_bytes_left)) == -1) {
+                free(aligned_buf);
                 return -1;
             }
 
@@ -2741,6 +2749,7 @@ int write_data_to_device(int fd, void *buf, size_t len, size_t optimal_block_siz
         }
     }
 
+    free(aligned_buf);
     return 0;
 }
 
