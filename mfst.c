@@ -3786,7 +3786,7 @@ int main(int argc, char **argv) {
             for(j = 0; j < 15; j++) {
                 handle_key_inputs(window);
                 sleep(1);
-                mvwprintw(window, 3, 11, "%-2d", 14 - j);
+                mvwprintw(window, 3, 11, "%-2lu", 14 - j);
                 wrefresh(window);
             }
         } else {
@@ -3822,7 +3822,7 @@ int main(int argc, char **argv) {
                 for(j = 0; j < 15; j++) {
                     handle_key_inputs(window);
                     sleep(1);
-                    mvwprintw(window, 7, 29, "%-2d", 14 - j);
+                    mvwprintw(window, 7, 29, "%-2lu", 14 - j);
                     wrefresh(window);
                 }
             } else {
