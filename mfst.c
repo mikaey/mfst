@@ -3462,6 +3462,7 @@ int screen_setup() {
     initscr();
 
     if(LINES < MIN_LINES || COLS < MIN_COLS) {
+        endwin();
         return -1;
     }
 
@@ -3772,7 +3773,6 @@ int main(int argc, char **argv) {
     // Initialize ncurses
     if(!program_options.no_curses) {
         if(screen_setup()) {
-            endwin();
             log_log("Terminal is too small -- turning off curses mode");
             program_options.no_curses = 1;
         } else {
