@@ -3926,7 +3926,8 @@ int main(int argc, char **argv) {
     if(!state_file_status) {
         log_log("Attempting to locate device described in state file");
         window = message_window(stdscr, NULL, (char *[]) {
-            "Finding device described in state file..."
+            "Finding device described in state file...",
+            NULL
         }, 0);
 
         fd = find_device();
