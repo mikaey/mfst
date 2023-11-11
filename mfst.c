@@ -3694,6 +3694,8 @@ int main(int argc, char **argv) {
         }
 
         if(ncurses_active) {
+            erase();
+            refresh();
             endwin();
         }
 
