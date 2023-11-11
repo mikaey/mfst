@@ -90,6 +90,7 @@ struct {
     char dont_show_warning_message;
     char *lock_file;
     char *state_file;
+    size_t force_sectors;
 } program_options;
 
 struct {
@@ -3524,6 +3525,8 @@ void print_help(char *program_name) {
     printf("                                 before using this option!)\n");
     printf("  -f|--lockfile filename         Use filename as the name for the lock file\n");
     printf("                                 instead of the default.  Default: mfst.lock\n");
+    printf("  -e|--sectors count             Skip probing the size of the device and assume\n");
+    printf("                                 that it is count sectors in size.\n");
     printf("  -h|--help                      Display this help message.\n\n");
 }
 
@@ -3560,6 +3563,7 @@ int parse_command_line_arguments(int argc, char **argv) {
         { "this-will-destroy-my-device", no_argument      , NULL, 2   },
         { "lockfile"                   , required_argument, NULL, 'f' },
         { "state-file"                 , required_argument, NULL, 't' },
+        { "sectors"                    , required_argument, NULL, 'e' },
         { 0                            , 0                , 0   , 0   }
     };
 
@@ -3568,7 +3572,7 @@ int parse_command_line_arguments(int argc, char **argv) {
     program_options.stats_interval = 60;
 
     while(1) {
-        c = getopt_long(argc, argv, "bf:hi:l:ns:t:", options, &optindex);
+        c = getopt_long(argc, argv, "be:f:hi:l:ns:t:", options, &optindex);
         if(c == -1) {
             break;
         }
@@ -3576,6 +3580,8 @@ int parse_command_line_arguments(int argc, char **argv) {
         switch(c) {
             case 2:
                 program_options.dont_show_warning_message = 1; break;
+            case 'e':
+                program_options.force_sectors = strtoull(optarg, NULL, 10); break;
             case 'f':
                 program_options.lock_file = malloc(strlen(optarg) + 1);
                 strcpy(program_options.lock_file, optarg);
@@ -4145,8 +4151,35 @@ int main(int argc, char **argv) {
 
         wait_for_file_lock(NULL);
 
-        if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, device_stats.block_size))) {
-            snprintf(str, sizeof(str), "Assuming that the kernel-reported device size (%'lu bytes) is correct.\n", device_stats.reported_size_bytes);
+        if(program_options.force_sectors) {
+            device_stats.num_sectors = program_options.force_sectors;
+            device_stats.detected_size_bytes = program_options.force_sectors * device_stats.sector_size;
+
+            snprintf(str, sizeof(str), "Assuming that the device is %'lu bytes long (as specified on the command line).", device_stats.detected_size_bytes);
+            log_log(str);
+
+            if(device_stats.detected_size_bytes == device_stats.reported_size_bytes) {
+                device_stats.is_fake_flash = FAKE_FLASH_NO;
+            } else {
+                device_stats.is_fake_flash = FAKE_FLASH_YES;
+            }
+
+            middle_of_device = device_stats.detected_size_bytes / 2;
+
+            if(!program_options.no_curses) {
+                mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.detected_size_bytes);
+                if(device_stats.detected_size_bytes != device_stats.reported_size_bytes) {
+                    attron(COLOR_PAIR(RED_ON_BLACK));
+                    mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Yes");
+                    attroff(COLOR_PAIR(RED_ON_BLACK));
+                } else {
+                    attron(COLOR_PAIR(GREEN_ON_BLACK));
+                    mvprintw(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, "Probably not");
+                    attroff(COLOR_PAIR(GREEN_ON_BLACK));
+                }
+            }
+        } else if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, device_stats.block_size))) {
+            snprintf(str, sizeof(str), "Assuming that the kernel-reported device size (%'lu bytes) is correct.", device_stats.reported_size_bytes);
             log_log(str);
 
             middle_of_device = device_stats.reported_size_bytes / 2;
