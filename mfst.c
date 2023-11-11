@@ -4246,27 +4246,29 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    if(!(sector_display.sector_map = (char *) malloc(device_stats.num_sectors))) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
-        log_log(str);
+    if(state_file_status) {
+        if(!(sector_display.sector_map = (char *) malloc(device_stats.num_sectors))) {
+            local_errno = errno;
+            snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
+            log_log(str);
 
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "Failed to allocate memory for the sector map.  Unfortunately this means that we",
-            "have to abort the stress test.",
-            "",
-            "The error we got while trying to allocate memory was:",
-            strerror(local_errno),
-            NULL
-        }, 1);
+            message_window(stdscr, ERROR_TITLE, (char *[]) {
+                "Failed to allocate memory for the sector map.  Unfortunately this means that we",
+                "have to abort the stress test.",
+                "",
+                "The error we got while trying to allocate memory was:",
+                strerror(local_errno),
+                NULL
+            }, 1);
         
-        cleanup();
-        return -1;
-    }
+            cleanup();
+            return -1;
+        }
 
-    // Initialize the sector map
-    bzero(sector_display.sector_map, device_stats.num_sectors);
-    device_stats.num_bad_sectors = 0;
+        // Initialize the sector map
+        bzero(sector_display.sector_map, device_stats.num_sectors);
+        device_stats.num_bad_sectors = 0;
+    }
 
     // Start filling up the device
     device_stats.bytes_since_last_status_update = 0;
