@@ -4298,7 +4298,7 @@ int main(int argc, char **argv) {
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
     stats_cur_time = stress_test_stats.previous_update_time;
 
-    for(num_bad_sectors = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
+    for(num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
         if(num_rounds > 0) {
             if(save_state()) {
                 log_log("Error creating save state, disabling save stating");
