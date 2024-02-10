@@ -1,7 +1,7 @@
 #if !defined(__MFST_H)
 #define __MFST_H
 
-#define VERSION "0.2"
+#define VERSION "0.3"
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
 
 // Periodicity of the random() function (cccording to the man page)
@@ -20,6 +20,12 @@
 #define BLACK_ON_RED   4
 #define GREEN_ON_BLACK 5
 #define RED_ON_BLACK   6
+
+// How many times to retry a given operation before attempting a reset
+#define MAX_OP_RETRIES 5
+
+// How many times to try resetting the device before giving up
+#define MAX_RESET_RETRIES 5
 
 // Abort reasons
 #define ABORT_REASON_READ_ERROR            1

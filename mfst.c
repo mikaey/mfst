@@ -23,6 +23,7 @@
 #include <json-c/json_object.h>
 #include <json-c/json_util.h>
 #include <json-c/json_pointer.h>
+#include <linux/usbdevice_fs.h>
 #include "mfst.h"
 #include "base64.h"
 
@@ -497,14 +498,6 @@ int did_device_disconnect() {
     struct stat sysstat;
     struct udev *udev_handle;
     struct udev_device *udev_dev;
-
-    // We'll sleep for a bit first to make sure that an in-progress eject has
-    // time to complete.
-    if(program_options.no_curses) {
-        usleep(250000);
-    } else {
-        napms(250);
-    }
 
     udev_handle = udev_new();
     if(!udev_handle) {
@@ -1954,6 +1947,13 @@ int are_devices_identical(const char *devname1, const char *devname2) {
  * device_stats and whose BOD/MOD data matches either bod_buffer or mod_buffer,
  * respectively.  If it finds it, it opens it and returns the file handle for
  * it.
+ *
+ * @param must_match_cmdline  Indicates whether the device found must match the
+ *                            one specified in program_options->device_name.  If
+ *                            zero, or if program_options.device_name is NULL,
+ *                            any device may be matched.  If non-zero, the
+ *                            device must be the same as the one in
+ *                            program_options.device_name.
  * 
  * @returns The file handle to the device, 0 if no matching device could be
  *          found, -1 if an error occurred while searching for the device, -2
@@ -1961,7 +1961,7 @@ int are_devices_identical(const char *devname1, const char *devname2) {
  *          was found but it doesn't match what was specified on the command
  *          line.
  */
-int find_device() {
+int find_device(char must_match_cmdline) {
     struct udev *udev_handle;
     struct udev_enumerate *udev_enum;
     struct udev_list_entry *list_entry;
@@ -1972,6 +1972,7 @@ int find_device() {
     char **matched_devices = NULL;
     int num_matches = 0;
     char str[256];
+    struct stat fs;
 
     udev_handle = udev_new();
     if(!udev_handle) {
@@ -2097,7 +2098,7 @@ int find_device() {
         return 0;
     } else if(num_matches == 1) {
         // Did the user specify a device on the command line?
-        if(program_options.device_name) {
+        if(program_options.device_name && must_match_cmdline) {
             // Does it match the device we found?
             if(are_devices_identical(program_options.device_name, matched_devices[0])) {
                 // Nope
@@ -2150,6 +2151,23 @@ int find_device() {
         }
     }
 
+    // Ok, we have a single match.  Grab the device number for it.
+    if(stat(program_options.device_name, &fs) == -1) {
+        snprintf(str, sizeof(str), "find_device(): Got a match on %s, but got an error while trying to stat() it: %s",
+            program_options.device_name, strerror(errno));
+        log_log(str);
+        log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+
+        for(i = 0; i < num_matches; i++) {
+            free(matched_devices[i]);
+        }
+
+        free(matched_devices);
+        return -1;
+    }
+
+    device_stats.device_num = fs.st_rdev;
+
     // Ok, we have a single match.  Re-open the device read/write.
     if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
         // Well crap.
@@ -2187,6 +2205,7 @@ int wait_for_device_reconnect() {
     size_t dev_size;
     int fd, ret;
     char *buffer;
+    struct stat fs;
 
     if(!(buffer = (char *) malloc(BOD_MOD_BUFFER_SIZE))) {
         snprintf(str, sizeof(str), "wait_for_device_reconnect(): Unable to allocate memory for buffer: %s", strerror(errno));
@@ -2291,7 +2310,18 @@ int wait_for_device_reconnect() {
                 continue;
             }
 
-            // Ok, we have a match.  Re-open the device read/write.
+            // Ok, we have a match.  Get stats on the device.
+            if(stat(dev_name, &fs) == -1) {
+                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to stat() it: %s",
+                    dev_name, strerror(errno));
+                log_log(str);
+                log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+
+                udev_device_unref(device);
+                continue;
+            }
+
+            // Re-open the device read/write.
             if((fd = open(dev_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
                 // Well crap.
                 snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to re-open() it: %s",
@@ -2310,6 +2340,7 @@ int wait_for_device_reconnect() {
             free(program_options.device_name);
             program_options.device_name = (char *) malloc(strlen(dev_name) + 1);
             strcpy(program_options.device_name, dev_name);
+	    device_stats.device_num = fs.st_rdev;
 
             // Cleanup and exit
             udev_device_unref(device);
@@ -2865,10 +2896,13 @@ size_t probe_device_size(int fd, size_t num_sectors, size_t optimal_block_size) 
         }
     }
 
-    // Write the blocks to the card.
-    for(i = 0; i < num_slices; i++) {
+    // Write the blocks to the card.  We're going to write them in reverse order
+    // so that if the card is caching some of the data when we go to read it
+    // back, hopefully the stuff toward the end of the device will already be
+    // flushed out of the cache.
+    for(i = num_slices; i > 0; i--) {
         handle_key_inputs(window);
-        if(lseek(fd, initial_sectors[i] * device_stats.sector_size, SEEK_SET) == -1) {
+        if(lseek(fd, initial_sectors[i - 1] * device_stats.sector_size, SEEK_SET) == -1) {
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
@@ -2877,7 +2911,7 @@ size_t probe_device_size(int fd, size_t num_sectors, size_t optimal_block_size) 
             return 0;            
         }
 
-        if(write_data_to_device(fd, buf + (i * slice_size), slice_size, optimal_block_size)) {
+        if(write_data_to_device(fd, buf + ((i - 1) * slice_size), slice_size, optimal_block_size)) {
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
@@ -3212,9 +3246,9 @@ int probe_device_speeds(int fd) {
                 while(bytes_left && secs < 30) {
                     handle_key_inputs(window);
                     if(rd) {
-                        // Choose a random sector
+                        // Choose a random sector, aligned on a 4K boundary
                         cur = (((((size_t) get_random_number()) << 32) | get_random_number()) & 0x7FFFFFFFFFFFFFFF) %
-                            (device_stats.num_sectors - (4096 / device_stats.sector_size));
+                            (device_stats.num_sectors - (4096 / device_stats.sector_size)) & 0xFFFFFFFFFFFFFFF8;
                         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
                             erase_and_delete_window(window);
                             lseek_error_during_speed_test();
@@ -3651,19 +3685,418 @@ int parse_command_line_arguments(int argc, char **argv) {
     return 0;
 }
 
+/**
+ * Determines whether the device described in device_stats.device_num is a device
+ * that we know how to reset.
+ *
+ * @returns 1 if we know how to reset the device, or 0 if we don't.
+ */
+int can_reset_device() {
+    struct udev *udev_handle;
+    struct udev_device *child_device, *parent_device;
+
+    udev_handle = udev_new();
+    if(!udev_handle) {
+        return 0;
+    }
+
+    child_device = udev_device_new_from_devnum(udev_handle, 'b', device_stats.device_num);
+    if(!child_device) {
+        udev_unref(udev_handle);
+        return 0;
+    }
+
+    // We only know how to reset USB devices -- so if it's not a USB device, we're gonna fail
+    parent_device = udev_device_get_parent_with_subsystem_devtype(child_device, "usb", "usb_device");
+    if(!parent_device) {
+      udev_device_unref(child_device);
+      udev_unref(udev_handle);
+      return 0;
+    }
+
+    udev_device_unref(child_device);
+    udev_unref(udev_handle);
+    return 1;
+}
+
+int reset_device(int device_fd) {
+    struct udev *udev_handle;
+    struct udev_device *child_device, *parent_device;
+    const char *device_name;
+    int fd;
+
+    udev_handle = udev_new();
+    if(!udev_handle) {
+        return -1;
+    }
+
+    child_device = udev_device_new_from_devnum(udev_handle, 'b', device_stats.device_num);
+    if(!child_device) {
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    parent_device = udev_device_get_parent_with_subsystem_devtype(child_device, "usb", "usb_device");
+    if(!parent_device) {
+        udev_device_unref(child_device);
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    device_name = udev_device_get_devnode(parent_device);
+    if(!device_name) {
+        udev_device_unref(child_device);
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    if((fd = open(device_name, O_WRONLY | O_NONBLOCK)) == -1) {
+        udev_device_unref(child_device);
+        udev_unref(udev_handle);
+        return -1;
+    }
+
+    close(device_fd);
+
+    if(ioctl(fd, USBDEVFS_RESET) == -1) {
+      close(fd);
+      return -1;
+    }
+
+    close(fd);
+
+    fd = find_device(0);
+    if(fd == -1) {
+      return -1;
+    }
+
+    if(fd <= 0) {
+        return wait_for_device_reconnect();
+    } else {
+        return fd;
+    }
+}
+
+off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int *device_was_disconnected) {
+    int op_retry_count;
+    int reset_retry_count;
+    off_t ret;
+    WINDOW *window;
+
+    op_retry_count = 0;
+    reset_retry_count = 0;
+    *device_was_disconnected = 0;
+    ret = lseek(*fd, position, SEEK_SET);
+
+    while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
+        // If we haven't completed at least one round, then we can't be sure that the
+        // beginning-of-device and middle-of-device are accurate -- and if the device
+        // is disconnected and reconnected (or reset), the device name might change --
+        // so only try to recover if we've completed at least one round.
+        if(num_rounds_completed > 0) {
+            if(did_device_disconnect() || *fd == -1) {
+                *device_was_disconnected = 1;
+                if(*fd != -1) {
+                    close(*fd);
+                }
+
+                log_log("retriable_lseek(): Device disconnected.  Waiting for device to be reconnected...");
+                window = message_window(stdscr, "Device Disconnected", (char *[]) {
+                    "The device has been disconnected.  It may have done this on its own, or it may",
+                    "have been manually removed (e.g., if someone pulled the device out of its USB",
+                    "port).",
+                    "",
+                    "Don't worry -- just plug the device back in.  We'll verify that it's the same",
+                    "device, then resume the stress test automatically.",
+                    NULL
+                }, 0);
+
+                *fd = wait_for_device_reconnect();
+
+                if(*fd == -1) {
+                    log_log("retriable_lseek(): Failed to reconnect device!");
+                } else {
+                    log_log("retriable_lseek(): Device reconnected.");
+                }
+
+                erase_and_delete_window(window);
+                redraw_screen();
+            } else {
+                if(op_retry_count < MAX_OP_RETRIES) {
+                    log_log("retriable_lseek(): Re-attempting seek operation");
+                    ret = lseek(*fd, position, SEEK_SET);
+                    op_retry_count++;
+                } else {
+                    if(can_reset_device()) {
+                        log_log("retriable_lseek(): Device error.  Attempting to reset the device...");
+                        window = message_window(stdscr, "Attempting to reset device", (char *[]) {
+                            "The device has encountered an error.  We're attempting to reset the device to",
+                            "see if that fixes the issue.  You shouldn't need to do anything -- but if this",
+                            "message stays up for a while, it might indicate that the device has failed or",
+                            "isn't handling the reset well.  In that case, you can try unplugging the device",
+                            "and plugging it back in to get the device working again.",
+                            NULL
+                        }, 0);
+
+                        *fd = reset_device(*fd);
+                        *device_was_disconnected = 1;
+
+                        if(*fd == -1) {
+                            log_log("retriable_lseek(): Device reset failed!");
+                            reset_retry_count = MAX_RESET_RETRIES;
+                        } else {
+                            log_log("retriable_lseek(): Device reset successfully.");
+                            op_retry_count = 0;
+                            reset_retry_count++;
+		        }
+
+                        erase_and_delete_window(window);
+                        redraw_screen();
+                    } else {
+                        // Insta-fail
+                        reset_retry_count = MAX_RESET_RETRIES;
+                    }
+		}
+            }
+        } else {
+          return -1;
+        }
+    }
+
+    return ret;
+}
+
+ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t num_rounds_completed) {
+    int op_retry_count;
+    int reset_retry_count;
+    int device_was_disconnected;
+    ssize_t ret;
+    WINDOW *window;
+    char str[256];
+
+    op_retry_count = 0;
+    reset_retry_count = 0;
+
+    ret = read(*fd, buf, count);
+
+    if(ret == -1) {
+        snprintf(str, sizeof(str), "retriable_read(): write error during sector %lu", position / device_stats.sector_size);
+    }
+
+    while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
+        if(did_device_disconnect() || *fd == -1) {
+            if(*fd != -1) {
+                close(*fd);
+            }
+
+            log_log("retriable_read(): Device disconnected.  Waiting for device to be reconnected...");
+            window = message_window(stdscr, "Device Disconnected", (char *[]) {
+                "The device has been disconnected.  It may have done this on its own, or it may",
+                "have been manually removed (e.g., if someone pulled the device out of its USB",
+                "port).",
+                "",
+                "Don't worry -- just plug the device back in.  We'll verify that it's the same",
+                "device, then resume the stress test automatically.",
+                NULL
+            }, 0);
+
+            *fd = wait_for_device_reconnect();
+
+            if(*fd != -1) {
+                log_log("retriable_read(): Device reconnected.");
+                if(retriable_lseek(fd, position, num_rounds_completed, &device_was_disconnected) == -1) {
+                    log_log("retriable_read(): Failed to seek to previous position after re-opening device");
+                    erase_and_delete_window(window);
+                    redraw_screen();
+                    return -1;
+                }
+            } else {
+                log_log("retriable_read(): Failed to reconnect device!");
+            }
+
+            erase_and_delete_window(window);
+            redraw_screen();
+        } else {
+            if(op_retry_count < MAX_OP_RETRIES) {
+                log_log("retriable_read(): Re-attempting read operation");
+                ret = read(*fd, buf, count);
+                op_retry_count++;
+            } else {
+                if(can_reset_device()) {
+                    log_log("retriable_read(): Device error.  Attempting to reset the device...");
+                    window = message_window(stdscr, "Attempting to reset device", (char *[]) {
+                        "The device has encountered an error.  We're attempting to reset the device to",
+                        "see if that fixes the issue.  You shouldn't need to do anything -- but if this",
+                        "message stays up for a while, it might indicate that the device has failed or",
+                        "isn't handling the reset well.  In that case, you can try unplugging the device",
+                        "and plugging it back in to get the device working again.",
+                        NULL
+                    }, 0);
+
+                    *fd = reset_device(*fd);
+
+                    if(*fd == -1) {
+                        log_log("retriable_read(): Device reset failed!");
+                        reset_retry_count = MAX_RESET_RETRIES;
+                    } else {
+                        log_log("retriable_read(): Device reset successfully.");
+                        op_retry_count = 0;
+                        reset_retry_count++;
+
+                        if(retriable_lseek(fd, position, num_rounds_completed, &device_was_disconnected) == -1) {
+                            log_log("retriable_read(): Failed to seek to previous position after re-opening device");
+                            erase_and_delete_window(window);
+                            redraw_screen();
+                            return -1;
+                        }
+
+			ret = read(*fd, buf, count);
+                    }
+
+		    usleep(250000); // Give the device time to either reconnect and settle or for the device to fully disconnect
+
+                    erase_and_delete_window(window);
+                    redraw_screen();
+                } else {
+                    // Insta-fail
+                    return -1;
+                }
+            }
+        }
+    }
+
+    return ret;
+}
+
+ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t num_rounds_completed, int *device_was_disconnected) {
+    int op_retry_count;
+    int reset_retry_count;
+    ssize_t ret;
+    WINDOW *window;
+    char str[256];
+
+    op_retry_count = 0;
+    reset_retry_count = 0;
+    *device_was_disconnected = 0;
+
+    ret = write(*fd, buf, count);
+
+    if(ret == -1) {
+        snprintf(str, sizeof(str), "retriable_write(): write error during sector %lu", position / device_stats.sector_size);
+	log_log(str);
+    }
+
+    while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
+        // If we haven't completed at least one round, then we can't be sure that the
+        // beginning-of-device and middle-of-device are accurate -- and if the device
+        // is disconnected and reconnected (or reset), the device name might change --
+        // so only try to recover if we've completed at least one round.
+        if(num_rounds_completed > 0) {
+            if(did_device_disconnect() || *fd == -1) {
+                if(*fd != -1) {
+                    close(*fd);
+                }
+
+                log_log("retriable_write(): Device disconnected.  Waiting for device to be reconnected...");
+                window = message_window(stdscr, "Device Disconnected", (char *[]) {
+                    "The device has been disconnected.  It may have done this on its own, or it may",
+                    "have been manually removed (e.g., if someone pulled the device out of its USB",
+                    "port).",
+                    "",
+                    "Don't worry -- just plug the device back in.  We'll verify that it's the same",
+                    "device, then resume the stress test automatically.",
+                    NULL
+                }, 0);
+
+                *fd = wait_for_device_reconnect();
+
+                if(*fd != -1) {
+                    log_log("retriable_write(): Device reconnected.");
+                    if(retriable_lseek(fd, position, num_rounds_completed, device_was_disconnected) == -1) {
+                        log_log("retriable_write(): Failed to seek to previous position after re-opening device");
+                        erase_and_delete_window(window);
+                        redraw_screen();
+                        return -1;
+                    }
+                } else {
+                    log_log("retriable_write(): Failed to re-open device!");
+		}
+
+		*device_was_disconnected = 1;
+
+                erase_and_delete_window(window);
+                redraw_screen();
+            } else {
+                if(op_retry_count < MAX_OP_RETRIES) {
+                    log_log("retriable_write(): Re-attempting write operation");
+                    ret = write(*fd, buf, count);
+                    op_retry_count++;
+                } else {
+                    if(can_reset_device()) {
+                        log_log("retriable_write(): Device error.  Attempting to reset the device...");
+                        window = message_window(stdscr, "Attempting to reset device", (char *[]) {
+                            "The device has encountered an error.  We're attempting to reset the device to",
+                            "see if that fixes the issue.  You shouldn't need to do anything -- but if this",
+                            "message stays up for a while, it might indicate that the device has failed or",
+                            "isn't handling the reset well.  In that case, you can try unplugging the device",
+                            "and plugging it back in to get the device working again.",
+                            NULL
+                        }, 0);
+
+                        *fd = reset_device(*fd);
+
+                        if(*fd == -1) {
+                            log_log("retriable_write(): Device reset failed!");
+                            reset_retry_count = MAX_RESET_RETRIES;
+                        } else {
+                            log_log("retriable_write(): Device reset successfully.");
+                            op_retry_count = 0;
+                            reset_retry_count++;
+
+                            if(retriable_lseek(fd, position, num_rounds_completed, device_was_disconnected) == -1) {
+                                log_log("retriable_write(): Failed to seek to previous position after re-opening device");
+                                erase_and_delete_window(window);
+                                redraw_screen();
+                                return -1;
+                            }
+
+			    ret = write(*fd, buf, count);
+                        }
+
+			*device_was_disconnected = 1;
+
+                        erase_and_delete_window(window);
+                        redraw_screen();
+                    } else {
+                        // Insta-fail
+                        return -1;
+                    }
+                }
+            }
+        } else {
+            return -1;
+        }
+    }
+
+    return ret;
+}
+
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
     size_t bytes_left_to_write, ret, cur_sector, middle_of_device;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
-    char *buf, *compare_buf;
+    char *buf, *compare_buf, *zero_buf;
     struct timeval speed_start_time;
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
     size_t num_bad_sectors_this_round, num_good_sectors_this_round;
-    size_t cur_slice, j;
+    size_t cur_slice, i, j;
     int *read_order;
-    char str[192];
+    int op_retry_count; // How many times have we tried the same operation without success?
+    int reset_retry_count; // How many times have we tried to reset the device?
+    int device_was_disconnected;
+    char str[192], tmp[16];
     struct timeval stats_cur_time;
     WINDOW *window;
 
@@ -3675,6 +4108,7 @@ int main(int argc, char **argv) {
     ncurses_active = 0;
     buf = NULL;
     compare_buf = NULL;
+    zero_buf = NULL;
     read_order = NULL;
     file_handles.lockfile_fd = -1;
     program_options.lock_file = NULL;
@@ -3711,6 +4145,10 @@ int main(int argc, char **argv) {
 
         if(compare_buf) {
             free(compare_buf);
+        }
+
+        if(zero_buf) {
+            free(zero_buf);
         }
 
         if(sector_display.sector_map) {
@@ -3948,7 +4386,7 @@ int main(int argc, char **argv) {
             NULL
         }, 0);
 
-        fd = find_device();
+        fd = find_device(1);
 
         erase_and_delete_window(window);
 
@@ -4264,6 +4702,29 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+    // This buffer is going to be filled with all zero's -- just to make it
+    // easier to determine if a sector we read back was all zero's
+    zero_buf = (char *) malloc(device_stats.sector_size);
+    if(!zero_buf) {
+      local_errno = errno;
+      snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
+      log_log(str);
+
+      message_window(stdscr, ERROR_TITLE, (char *[]) {
+          "Failed to allocate memory for one of the buffers we need to do the stress test.",
+          "Unfortunately this means we have to abort the stress test.",
+          "",
+          "The error we got while trying to allocate memory was:",
+          strerror(local_errno),
+          NULL
+      }, 1);
+
+      cleanup();
+      return -1;
+    }
+
+    memset(zero_buf, 0, device_stats.sector_size);
+
     compare_buf = (char *) valloc(device_stats.block_size);
     if(!compare_buf) {
         local_errno = errno;
@@ -4369,38 +4830,12 @@ int main(int argc, char **argv) {
             random_calls = 0;
             srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
 
-            if(lseek(fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, SEEK_SET) == -1) {
-                close(fd);
-                fd = -1;
+            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
+                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                    ABORT_REASON_SEEK_ERROR);
 
-                if(did_device_disconnect() && num_rounds > 0) {
-                    log_log("Device disconnected.  Waiting for device to be reconnected...");
-                    window = message_window(stdscr, "Device Disconnected", (char *[]) {
-                        "The device has been disconnected.  It may have done this on its own, or it may",
-                        "have been manually removed (e.g., if someone pulled the device out of its USB",
-                        "port).",
-                        "",
-                        "Don't worry -- just plug the device back in.  We'll verify that it's the same",
-                        "device, then resume the stress test automatically.",
-                        NULL
-                    }, 0);
-
-                    fd = wait_for_device_reconnect();
-
-                    erase_and_delete_window(window);
-                    redraw_screen();
-                }
-
-                if(fd == -1) {
-                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                        ABORT_REASON_SEEK_ERROR);
-
-                    cleanup();
-                    return 0;
-                } else {
-                    cur_slice--;
-                    continue;
-                }
+                cleanup();
+                return 0;
             }
 
             if(read_order[cur_slice] == 15) {
@@ -4427,39 +4862,43 @@ int main(int argc, char **argv) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
 
-                    if((ret = write(fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write)) == -1) {
-                        close(fd);
-                        fd = -1;
-
-                        if(did_device_disconnect() && num_rounds > 0) {
-                            log_log("Device disconnected.  Waiting for device to be reconnected...");
-                            window = message_window(stdscr, "Device Disconnected", (char *[]) {
-                                "The device has been disconnected.  It may have done this on its own, or it may",
-                                "have been manually removed (e.g., if someone pulled the device out of its USB",
-                                "port).",
-                                "",
-                                "Don't worry -- just plug the device back in.  We'll verify that it's the same",
-                                "device, then resume the stress test automatically.",
-                                NULL
-                            }, 0);
-
-                            fd = wait_for_device_reconnect();
-
-                            erase_and_delete_window(window);
-                            redraw_screen();
-                        }
-
+                    if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), num_rounds, &device_was_disconnected)) == -1) {
                         if(fd == -1) {
                             print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                                 ABORT_REASON_WRITE_ERROR);
 
+                            cleanup();
                             return 0;
                         } else {
-                            // Start the slice over to avoid the nightmare of
-                            // figuring out where we need to restart from
-                            restart_slice = 1;
-                            break;
+                            // Mark this sector bad and skip over it
+                            if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
+                                snprintf(str, sizeof(str), "Write error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                log_log(str);
+                            }
+
+                            mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+
+			    if(device_was_disconnected) {
+			      restart_slice = 1;
+			      break;
+			    }
+
+                            bytes_left_to_write -= device_stats.sector_size;
+
+                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), num_rounds, &device_was_disconnected)) == -1) {
+                                // Give up if we can't seek
+                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                                cleanup();
+                                return 0;
+                            }
+
+                            continue;
                         }
+                    }
+
+                    if(device_was_disconnected) {
+                        restart_slice = 1;
+                        break;
                     }
 
                     // Do we need to update the BOD buffer?
@@ -4536,6 +4975,7 @@ int main(int argc, char **argv) {
 
             if(restart_slice) {
                 // Unmark the sectors we've written in this slice so far
+                log_log("Device disconnect was detected during this slice -- restarting slice");
                 for(j = get_slice_start(read_order[cur_slice]); j < last_sector; j++) {
                     sector_display.sector_map[j] &= 0x01;
                 }
@@ -4560,9 +5000,8 @@ int main(int argc, char **argv) {
             random_calls = 0;
             srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
 
-            if(lseek(fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, SEEK_SET) == -1) {
+            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
-
                 cleanup();
                 return 0;
             }
@@ -4592,49 +5031,32 @@ int main(int argc, char **argv) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
 
-                    if((ret = read(fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write)) == -1) {
-                        close(fd);
-                        fd = -1;
-
-                        if(did_device_disconnect()) {
-                            log_log("Device disconnected.  Waiting for device to be reconnected...");
-                            window = message_window(stdscr, "Device Disconnected", (char *[]) {
-                                "The device has been disconnected.  It may have done this on its own, or it may",
-                                "have been manually removed (e.g., if someone pulled the device out of its USB",
-                                "port).",
-                                "",
-                                "Don't worry -- just plug the device back in.  We'll verify that it's the same",
-                                "device, then resume the stress test automatically.",
-                                NULL
-                            }, 0);
-
-                            fd = wait_for_device_reconnect();
-
-                            erase_and_delete_window(window);
-                            redraw_screen();
-                        }
-
+                    if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), num_rounds)) == -1) {
                         if(fd == -1) {
                             print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                                 ABORT_REASON_READ_ERROR);
 
                             cleanup();
                             return 0;
-                        }
+                        } else {
+                            // Mark this sector as bad and skip over it
+                            if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
+                                snprintf(str, sizeof(str), "Read error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                log_log(str);
+                            }
 
-                        // For reads, we can recover a little more
-                        // gracefully.  We just need to seek back
-                        // to where we were and repeat the read.
-                        if(lseek(fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), SEEK_SET) == -1) {
-                            // I guess just give up now
-                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                                ABORT_REASON_SEEK_ERROR);
-                            
-                            cleanup();
-                            return 0;
-                        }
+                            mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                            bytes_left_to_write -= device_stats.sector_size;
 
-                        continue;
+                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), num_rounds, &device_was_disconnected)) == -1) {
+                              // Give up if we can't seek
+                              print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                              cleanup();
+                              return 0;
+                            }
+
+                            continue;
+                        }
                     }
 
                     bytes_left_to_write -= ret;
@@ -4653,7 +5075,47 @@ int main(int argc, char **argv) {
                     if(memcmp(buf + j, compare_buf + j, device_stats.sector_size)) {
                         num_bad_sectors_this_round++;
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
-                            num_bad_sectors++;
+			  if(memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu; marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(str);
+                                log_log("Expected data was:");
+
+                                for(i = 0; i < device_stats.sector_size; i++) {
+                                    if(!(i % 16)) {
+                                        snprintf(str, sizeof(str), "    %016lx:", (cur_sector * device_stats.sector_size) + j + i);
+                                    }
+
+                                    snprintf(tmp, sizeof(tmp), " %02x%s", buf[j + i] & 0xff, (i % 16) == 7 ? "    " : "");
+                                    strcat(str, tmp);
+
+                                    if((i % 16) == 15 || i == (device_stats.sector_size - 1)) {
+                                        log_log(str);
+                                    }
+                                }
+
+                                log_log("");
+                                log_log("Actual data was:");
+
+                                for(i = 0; i < device_stats.sector_size; i++) {
+                                    if(!(i % 16)) {
+                                        snprintf(str, sizeof(str), "    %016lx:", (cur_sector * device_stats.sector_size) + j + i);
+                                    }
+
+                                    snprintf(tmp, sizeof(tmp), " %02x%s", compare_buf[j + i] & 0xff, (i % 16) == 7 ? "    " : "");
+                                    strcat(str, tmp);
+
+                                    if((i % 16) == 15 || i == (device_stats.sector_size - 1)) {
+                                        log_log(str);
+                                    }
+                                }
+
+                                log_log("");
+
+                                num_bad_sectors++;
+                            } else {
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all zeroes); marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(str);
+                            }
                         }
 
                         mark_sector_bad(cur_sector + (j / device_stats.sector_size));
