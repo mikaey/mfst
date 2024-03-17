@@ -625,7 +625,7 @@ int load_state() {
     struct stat statbuf;
     struct json_object *root, *obj;
     char str[256];
-    int i, j;
+    int i;
     char *buffer;
     size_t detected_size, sector_size, k, l;
 
@@ -829,6 +829,17 @@ int load_state() {
         &state_data.twenty_five_percent_failure_round
     };
 
+    void free_buffers() {
+        int j;
+        json_object_put(root);
+
+        for(j = 0; all_props[j]; j++) {
+            if(buffers[j]) {
+                free(buffers[j]);
+            }
+        }
+    }
+
     if(!program_options.state_file) {
         return 1;
     }
@@ -871,13 +882,7 @@ int load_state() {
                 (prop_types[i] != json_type_double && json_object_get_type(obj) != prop_types[i])) {
                 snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s has an incorrect data type", all_props[i]);
                 log_log(str);
-                json_object_put(root);
-
-                for(j = 0; j < i; j++) {
-                    if(buffers[j]) {
-                        free(buffers[j]);
-                    }
-                }
+                free_buffers();
 
                 return -1;
             }
@@ -888,13 +893,7 @@ int load_state() {
                 if(json_object_get_uint64(obj) == 0) {
                     snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
                     log_log(str);
-                    json_object_put(root);
-
-                    for(j = 0; j < i; j++) {
-                        if(buffers[j]) {
-                            free(buffers[j]);
-                        }
-                    }
+                    free_buffers();
 
                     return -1;
                 }
@@ -902,13 +901,7 @@ int load_state() {
                 if(json_object_get_double(obj) <= 0) {
                     snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
                     log_log(str);
-                    json_object_put(root);
-
-                    for(j = 0; j < i; j++) {
-                        if(buffers[j]) {
-                            free(buffers[j]);
-                        }
-                    }
+                    free_buffers();
 
                     return -1;
                 }
@@ -918,13 +911,7 @@ int load_state() {
                 if(!buffers[i]) {
                     snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
                     log_log(str);
-                    json_object_put(root);
-
-                    for(j = 0; j < i; j++) {
-                        if(buffers[j]) {
-                            free(buffers[j]);
-                        }
-                    }
+                    free_buffers();
 
                     return -1;
                 }
@@ -937,13 +924,7 @@ int load_state() {
                     if(!buffer) {
                         snprintf(str, sizeof(str), "load_state(): Rejecting state file: unable to Base64-decode %s", all_props[i]);
                         log_log(str);
-                        json_object_put(root);
-
-                        for(j = 0; j < i; j++) {
-                            if(buffers[j]) {
-                                free(buffers[j]);
-                            }
-                        }
+                        free_buffers();
 
                         return -1;
                     }
@@ -993,13 +974,7 @@ int load_state() {
         if(base64_props[i] && (buffer_lens[i] != expected_lens[i])) {
             snprintf(str, sizeof(str), "load_state(): Rejecting state file: %s contains the wrong amount of data", all_props[i]);
             log_log(str);
-            json_object_put(root);
-
-            for(j = 0; all_props[j]; j++) {
-                if(buffers[j]) {
-                    free(buffers[j]);
-                }
-            }
+            free_buffers();
 
             return -1;
         }
@@ -1009,13 +984,8 @@ int load_state() {
     if(!(sector_display.sector_map = malloc(detected_size / sector_size))) {
         snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
         log_log(str);
-        json_object_put(root);
+        free_buffers();
 
-        for(j = 0; all_props[j]; j++) {
-            if(buffers[j]) {
-                free(buffers[j]);
-            }
-        }
     }
 
     // Ok, let's go ahead and start populating everything.
