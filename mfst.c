@@ -4108,6 +4108,38 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
     return ret;
 }
 
+void malloc_error(int errnum) {
+    char str[256];
+
+    snprintf(str, sizeof(str), "malloc() failed: %s", strerror(errnum));
+    log_log(str);
+
+    message_window(stdscr, ERROR_TITLE, (char *[]) {
+        "Failed to allocate memory for one of the buffers we need to do the stress test.",
+        "Unfortunately this means we have to abort the stress test.",
+        "",
+        "The error we got while trying to allocate memory was:",
+        strerror(errnum),
+        NULL
+    }, 1);
+}
+
+void valloc_error(int errnum) {
+    char str[256];
+
+    snprintf(str, sizeof(str), "valloc() failed: %s", strerror(errnum));
+    log_log(str);
+
+    message_window(stdscr, ERROR_TITLE, (char *[]) {
+        "Failed to allocate memory for one of the buffers we need to do the stress test.",
+        "Unfortunately this means we have to abort the stress test.",
+        "",
+        "The error we got while trying to allocate memory was:",
+        strerror(errnum),
+        NULL
+    }, 1);
+}
+
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
@@ -4717,19 +4749,7 @@ int main(int argc, char **argv) {
 
     buf = (char *) valloc(device_stats.block_size);
     if(!buf) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "valloc() failed: %s", strerror(local_errno));
-        log_log(str);
-
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "Failed to allocate memory for one of the buffers we need to do the stress test.",
-            "Unfortunately this means we have to abort the stress test.",
-            "",
-            "The error we got while trying to allocate memory was:",
-            strerror(local_errno),
-            NULL
-        }, 1);
-
+        valloc_error(errno);
         cleanup();
         return -1;
     }
@@ -4738,19 +4758,7 @@ int main(int argc, char **argv) {
     // easier to determine if a sector we read back was all zero's
     zero_buf = (char *) malloc(device_stats.sector_size);
     if(!zero_buf) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
-        log_log(str);
-
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "Failed to allocate memory for one of the buffers we need to do the stress test.",
-            "Unfortunately this means we have to abort the stress test.",
-            "",
-            "The error we got while trying to allocate memory was:",
-            strerror(local_errno),
-            NULL
-        }, 1);
-
+        malloc_error(errno);
         cleanup();
         return -1;
     }
@@ -4759,19 +4767,7 @@ int main(int argc, char **argv) {
 
     ff_buf = (char *) malloc(device_stats.sector_size);
     if(!ff_buf) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
-        log_log(str);
-
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "Failed to allocate memory for one of the buffers we need to do the stress test.",
-            "Unfortunately this means we have to abort the stress test.",
-            "",
-            "The error we got while trying to allocate memory was:",
-            strerror(local_errno),
-            NULL
-        }, 1);
-
+        malloc_error(errno);
         cleanup();
         return -1;
     }
@@ -4780,38 +4776,14 @@ int main(int argc, char **argv) {
 
     compare_buf = (char *) valloc(device_stats.block_size);
     if(!compare_buf) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "valloc() failed: %s", strerror(local_errno));
-        log_log(str);
-
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "Failed to allocate memory for one of the buffers we need to do the stress test.",
-            "Unfortunately this means we have to abort the stress test.",
-            "",
-            "The error we got while trying to allocate memory was:",
-            strerror(local_errno),
-            NULL
-        }, 1);
-
+        valloc_error(errno);
         cleanup();
         return -1;
     }
 
     if(state_file_status) {
         if(!(sector_display.sector_map = (char *) malloc(device_stats.num_sectors))) {
-            local_errno = errno;
-            snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
-            log_log(str);
-
-            message_window(stdscr, ERROR_TITLE, (char *[]) {
-                "Failed to allocate memory for the sector map.  Unfortunately this means that we",
-                "have to abort the stress test.",
-                "",
-                "The error we got while trying to allocate memory was:",
-                strerror(local_errno),
-                NULL
-            }, 1);
-        
+            malloc_error(errno);
             cleanup();
             return -1;
         }
