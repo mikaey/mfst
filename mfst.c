@@ -2131,7 +2131,7 @@ int find_device(char must_match_cmdline) {
                 }
             }
 
-            if(!ret) {
+           if(!ret) {
                 // Nope
                 for(i = 0; i < num_matches; i++) {
                     free(matched_devices[i]);
@@ -2340,7 +2340,7 @@ int wait_for_device_reconnect() {
             free(program_options.device_name);
             program_options.device_name = (char *) malloc(strlen(dev_name) + 1);
             strcpy(program_options.device_name, dev_name);
-	    device_stats.device_num = fs.st_rdev;
+            device_stats.device_num = fs.st_rdev;
 
             // Cleanup and exit
             udev_device_unref(device);
@@ -3848,7 +3848,7 @@ off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int 
                             log_log("retriable_lseek(): Device reset successfully.");
                             op_retry_count = 0;
                             reset_retry_count++;
-		        }
+                        }
 
                         erase_and_delete_window(window);
                         redraw_screen();
@@ -3856,7 +3856,7 @@ off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int 
                         // Insta-fail
                         reset_retry_count = MAX_RESET_RETRIES;
                     }
-		}
+                }
             }
         } else {
           return -1;
@@ -3950,10 +3950,10 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
                             return -1;
                         }
 
-			ret = read(*fd, buf, count);
+                        ret = read(*fd, buf, count);
                     }
 
-		    usleep(250000); // Give the device time to either reconnect and settle or for the device to fully disconnect
+                    usleep(250000); // Give the device time to either reconnect and settle or for the device to fully disconnect
 
                     erase_and_delete_window(window);
                     redraw_screen();
@@ -3983,7 +3983,7 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
 
     if(ret == -1) {
         snprintf(str, sizeof(str), "retriable_write(): write error during sector %lu", position / device_stats.sector_size);
-	log_log(str);
+        log_log(str);
     }
 
     while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
@@ -4020,9 +4020,9 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
                     }
                 } else {
                     log_log("retriable_write(): Failed to re-open device!");
-		}
+                }
 
-		*device_was_disconnected = 1;
+                *device_was_disconnected = 1;
 
                 erase_and_delete_window(window);
                 redraw_screen();
@@ -4060,10 +4060,10 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
                                 return -1;
                             }
 
-			    ret = write(*fd, buf, count);
+                            ret = write(*fd, buf, count);
                         }
 
-			*device_was_disconnected = 1;
+                        *device_was_disconnected = 1;
 
                         erase_and_delete_window(window);
                         redraw_screen();
@@ -4087,7 +4087,7 @@ int main(int argc, char **argv) {
     size_t bytes_left_to_write, ret, cur_sector, middle_of_device;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
-    char *buf, *compare_buf, *zero_buf;
+    char *buf, *compare_buf, *zero_buf, *ff_buf;
     struct timeval speed_start_time;
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
     size_t num_bad_sectors_this_round, num_good_sectors_this_round;
@@ -4785,7 +4785,7 @@ int main(int argc, char **argv) {
 
         stress_test_stats.previous_bytes_written = state_data.bytes_written;
         stress_test_stats.previous_bytes_read = state_data.bytes_read;
-	stress_test_stats.previous_bad_sectors = device_stats.num_bad_sectors;
+        stress_test_stats.previous_bad_sectors = device_stats.num_bad_sectors;
 
         snprintf(str, sizeof(str), "Resuming stress test from round %'lu", num_rounds + 1);
         log_log(str);
@@ -4878,10 +4878,10 @@ int main(int argc, char **argv) {
 
                             mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
 
-			    if(device_was_disconnected) {
-			      restart_slice = 1;
-			      break;
-			    }
+                            if(device_was_disconnected) {
+                              restart_slice = 1;
+                              break;
+                            }
 
                             bytes_left_to_write -= device_stats.sector_size;
 
@@ -5120,7 +5120,7 @@ int main(int argc, char **argv) {
 
                         mark_sector_bad(cur_sector + (j / device_stats.sector_size));
                     } else {
-		      if(is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
+                      if(is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             num_good_sectors_this_round++;
                         }
                     }
@@ -5151,11 +5151,11 @@ int main(int argc, char **argv) {
             snprintf(str, sizeof(str), "  New bad sectors this round: %'lu", num_bad_sectors);
             log_log(str);
 
-	    snprintf(str, sizeof(str), "  Sectors marked bad in a previous round that passed verification this round: %'lu", num_good_sectors_this_round);
-	    log_log(str);
+            snprintf(str, sizeof(str), "  Sectors marked bad in a previous round that passed verification this round: %'lu", num_good_sectors_this_round);
+            log_log(str);
 
-	    snprintf(str, sizeof(str), "  Total bad sectors: %'lu (%0.2f%% of total)", device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
-	    log_log(str);
+            snprintf(str, sizeof(str), "  Total bad sectors: %'lu (%0.2f%% of total)", device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
+            log_log(str);
         } /* else {
             snprintf(str, sizeof(str), "Round %'lu complete, %'lu new bad sectors found this round; %'lu bad sectors discovered total (%0.2f%% of total)",
                 num_rounds + 1, num_bad_sectors, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
@@ -5173,7 +5173,7 @@ int main(int argc, char **argv) {
                 (state_data.twenty_five_percent_failure_round == -1)) {
                 state_data.twenty_five_percent_failure_round = num_rounds;
             }
-	    } */
+            } */
     }
 
     print_device_summary(num_rounds - 1, num_rounds, ABORT_REASON_FIFTY_PERCENT_FAILURE);
