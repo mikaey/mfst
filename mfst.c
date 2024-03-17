@@ -37,6 +37,7 @@ struct random_data random_state;
 char random_number_state_buf[256];
 char speed_qualifications_shown;
 char ncurses_active;
+char *forced_device;
 ssize_t num_rounds;
 int is_writing;
 
@@ -3588,6 +3589,11 @@ void print_help(char *program_name) {
     printf("                                 instead of the default.  Default: mfst.lock\n");
     printf("  -e|--sectors count             Skip probing the size of the device and assume\n");
     printf("                                 that it is count sectors in size.\n");
+    printf("  --force-device device_name     Force the program to use the specified device.\n");
+    printf("                                 This option is only valid when resuming from a\n");
+    printf("                                 state file.  Only use this option with\n");
+    printf("                                 problematic devices and you are sure the device\n");
+    printf("                                 you specify is the correct device.\n");
     printf("  -h|--help                      Display this help message.\n\n");
 }
 
@@ -3625,6 +3631,7 @@ int parse_command_line_arguments(int argc, char **argv) {
         { "lockfile"                   , required_argument, NULL, 'f' },
         { "state-file"                 , required_argument, NULL, 't' },
         { "sectors"                    , required_argument, NULL, 'e' },
+        { "force-device"               , required_argument, NULL, 3   },
         { 0                            , 0                , 0   , 0   }
     };
 
@@ -3641,6 +3648,10 @@ int parse_command_line_arguments(int argc, char **argv) {
         switch(c) {
             case 2:
                 program_options.dont_show_warning_message = 1; break;
+            case 3:
+                forced_device = malloc(strlen(optarg) + 1);
+                strcpy(forced_device, optarg);
+                break;
             case 'e':
                 program_options.force_sectors = strtoull(optarg, NULL, 10); break;
             case 'f':
@@ -4173,6 +4184,7 @@ int main(int argc, char **argv) {
     file_handles.lockfile_fd = -1;
     program_options.lock_file = NULL;
     program_options.state_file = NULL;
+    forced_device = NULL;
     is_writing = -1;
 
     void cleanup() {
@@ -4237,6 +4249,10 @@ int main(int argc, char **argv) {
 
         if(program_options.state_file) {
             free(program_options.state_file);
+        }
+
+        if(forced_device) {
+            free(forced_device);
         }
     }
 
@@ -4443,7 +4459,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    if(!state_file_status) {
+    if(!state_file_status && !forced_device) {
         log_log("Attempting to locate device described in state file");
         window = message_window(stdscr, NULL, (char *[]) {
             "Finding device described in state file...",
@@ -4534,6 +4550,21 @@ int main(int argc, char **argv) {
             return -1;
         }
     } else {
+        if(forced_device) {
+            if(state_file_status) {
+                log_log("Not resuming from a state file -- ignoring --force-device parameter");
+            } else {
+                log_log("--force_device specified on command line, resuming from specified device");
+
+                if(program_options.device_name) {
+                    free(program_options.device_name);
+                }
+
+                program_options.device_name = forced_device;
+                forced_device = NULL;
+            }
+        }
+
         if(stat(program_options.device_name, &fs)) {
             local_errno = errno;
             snprintf(str, sizeof(str), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(local_errno));
