@@ -4738,21 +4738,21 @@ int main(int argc, char **argv) {
     // easier to determine if a sector we read back was all zero's
     zero_buf = (char *) malloc(device_stats.sector_size);
     if(!zero_buf) {
-      local_errno = errno;
-      snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
-      log_log(str);
+        local_errno = errno;
+        snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
+        log_log(str);
 
-      message_window(stdscr, ERROR_TITLE, (char *[]) {
-          "Failed to allocate memory for one of the buffers we need to do the stress test.",
-          "Unfortunately this means we have to abort the stress test.",
-          "",
-          "The error we got while trying to allocate memory was:",
-          strerror(local_errno),
-          NULL
-      }, 1);
+        message_window(stdscr, ERROR_TITLE, (char *[]) {
+            "Failed to allocate memory for one of the buffers we need to do the stress test.",
+            "Unfortunately this means we have to abort the stress test.",
+            "",
+            "The error we got while trying to allocate memory was:",
+            strerror(local_errno),
+            NULL
+        }, 1);
 
-      cleanup();
-      return -1;
+        cleanup();
+        return -1;
     }
 
     memset(zero_buf, 0, device_stats.sector_size);
