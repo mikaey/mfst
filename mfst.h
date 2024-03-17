@@ -276,5 +276,11 @@
 #define SPEED_A2_RESULT_Y 23
 #define SPEED_A2_RESULT_X (COLS - 25)
 
+// Return values for load_state()
+#define LOAD_STATE_SUCCESS 0
+#define LOAD_STATE_FILE_NOT_SPECIFIED 1
+#define LOAD_STATE_FILE_DOES_NOT_EXIST 2
+#define LOAD_STATE_LOAD_ERROR 3
+
 #endif
 

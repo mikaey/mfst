@@ -617,9 +617,13 @@ void log_log(char *msg) {
 /**
  * Loads the program state from the file named in program_options.state_file.
  * 
- * @returns 0 if a state file was present and loaded successfully, -1 if an
- *          error occurred, or 1 if the state file could not be found or if
- *          program_options.state_file is NULL.
+ * @returns LOAD_STATE_SUCCESS if a state file was present and loaded
+ *          successfully,
+ *          LOAD_STATE_FILE_NOT_SPECIFIED if program_options.state_file is set
+ *          to NULL,
+ *          LOAD_STATE_FILE_DOES_NOT_EXIST if the specified state file does not
+ *          exist, or
+ *          LOAD_STATE_LOAD_ERROR if an error occurred.
  */
 int load_state() {
     struct stat statbuf;
@@ -841,24 +845,24 @@ int load_state() {
     }
 
     if(!program_options.state_file) {
-        return 1;
+        return LOAD_STATE_FILE_NOT_SPECIFIED;
     }
 
     if(stat(program_options.state_file, &statbuf) == -1) {
         if(errno == ENOENT) {
             log_log("load_state(): state file not present");
-            return 1;
+            return LOAD_STATE_FILE_DOES_NOT_EXIST;
         } else {
             snprintf(str, sizeof(str), "load_state(): unable to stat() state file: %s", strerror(errno));
             log_log(str);
-            return -1;
+            return LOAD_STATE_LOAD_ERROR;
         }
     }
 
     if(!(root = json_object_from_file(program_options.state_file))) {
         snprintf(str, sizeof(str), "load_state(): Unable to load state file: %s", json_util_get_last_err());
         log_log(str);
-        return -1;
+        return LOAD_STATE_LOAD_ERROR;
     }
 
     // Validate the JSON before we try to load anything from it.
@@ -868,7 +872,7 @@ int load_state() {
             snprintf(str, sizeof(str), "load_state(): Rejecting state file: required property %s is missing from JSON", all_props[i]);
             log_log(str);
             json_object_put(root);
-            return -1;
+            return LOAD_STATE_LOAD_ERROR;
         }
 
         // Make sure data types match.
@@ -884,7 +888,7 @@ int load_state() {
                 log_log(str);
                 free_buffers();
 
-                return -1;
+                return LOAD_STATE_LOAD_ERROR;
             }
 
             // Make sure numeric values are greater than 0 and strings are more
@@ -895,7 +899,7 @@ int load_state() {
                     log_log(str);
                     free_buffers();
 
-                    return -1;
+                    return LOAD_STATE_LOAD_ERROR;
                 }
             } else if(prop_types[i] == json_type_double) {
                 if(json_object_get_double(obj) <= 0) {
@@ -903,7 +907,7 @@ int load_state() {
                     log_log(str);
                     free_buffers();
 
-                    return -1;
+                    return LOAD_STATE_LOAD_ERROR;
                 }
             } else if(prop_types[i] == json_type_string) {
                 // Go ahead and copy it over to a buffer
@@ -913,7 +917,7 @@ int load_state() {
                     log_log(str);
                     free_buffers();
 
-                    return -1;
+                    return LOAD_STATE_LOAD_ERROR;
                 }
 
                 strcpy(buffers[i], json_object_get_string(obj));
@@ -926,7 +930,7 @@ int load_state() {
                         log_log(str);
                         free_buffers();
 
-                        return -1;
+                        return LOAD_STATE_LOAD_ERROR;
                     }
 
                     free(buffers[i]);
@@ -976,7 +980,7 @@ int load_state() {
             log_log(str);
             free_buffers();
 
-            return -1;
+            return LOAD_STATE_LOAD_ERROR;
         }
     }
 
@@ -1038,7 +1042,7 @@ int load_state() {
     }
 
     json_object_put(root);
-    return 0;
+    return LOAD_STATE_SUCCESS;
 }
 
 /**
@@ -4249,7 +4253,7 @@ int main(int argc, char **argv) {
     state_file_status = load_state();
 
     // Recompute num_sectors now so that we don't crash when we call redraw_screen
-    if(!state_file_status) {
+    if(state_file_status == LOAD_STATE_SUCCESS) {
         device_stats.num_sectors = device_stats.detected_size_bytes / device_stats.sector_size;
     }
 
@@ -4276,7 +4280,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if(state_file_status == -1) {
+    if(state_file_status == LOAD_STATE_LOAD_ERROR) {
         log_log("WARNING: There was a problem loading the state file.  The existing state file");
         log_log("will be ignored (and eventually overwritten).  If you don't want this to happen,");
         log_log("you have 15 seconds to hit Ctrl+C to abort the program.");
@@ -4299,10 +4303,10 @@ int main(int argc, char **argv) {
             sleep(15);
         }
 
-        state_file_status = 1;
+        state_file_status = LOAD_STATE_FILE_DOES_NOT_EXIST;
     }
 
-    if(state_file_status == 1) {
+    if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         if(!program_options.dont_show_warning_message) {
             log_log("WARNING: This program is DESTRUCTIVE.  It is designed to stress test storage");
             log_log("devices (particularly flash media) to the point of failure.  If you let this");
@@ -4361,7 +4365,7 @@ int main(int argc, char **argv) {
 
     log_log("Program started.");
 
-    if(!state_file_status) {
+    if(state_file_status == LOAD_STATE_SUCCESS) {
         snprintf(str, sizeof(str), "Resuming from state file %s", program_options.state_file);
         log_log(str);
     }
@@ -4429,7 +4433,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    if(!state_file_status && !forced_device) {
+    if(state_file_status == LOAD_STATE_SUCCESS && !forced_device) {
         log_log("Attempting to locate device described in state file");
         window = message_window(stdscr, NULL, (char *[]) {
             "Finding device described in state file...",
@@ -4521,7 +4525,7 @@ int main(int argc, char **argv) {
         }
     } else {
         if(forced_device) {
-            if(state_file_status) {
+            if(state_file_status != LOAD_STATE_SUCCESS) {
                 log_log("Not resuming from a state file -- ignoring --force-device parameter");
             } else {
                 log_log("--force_device specified on command line, resuming from specified device");
@@ -4612,7 +4616,7 @@ int main(int argc, char **argv) {
 
     device_stats.device_num = fs.st_rdev;
 
-    if(state_file_status) {
+    if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         device_stats.num_sectors = device_stats.reported_size_bytes / device_stats.sector_size;
     }
 
@@ -4635,7 +4639,7 @@ int main(int argc, char **argv) {
     mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.reported_size_bytes);
     refresh();
 
-    if(state_file_status) {
+    if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         profile_random_number_generator();
 
         if(program_options.probe_for_optimal_block_size) {
@@ -4742,7 +4746,7 @@ int main(int argc, char **argv) {
     //      sector-by-sector basis.  If they match, then the sector is good.
     //  - Repeat until at least 50% of the sectors read result in mismatches.
     current_seed = initial_seed = time(NULL);
-    if(state_file_status) {
+    if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         state_data.first_failure_round = state_data.ten_percent_failure_round = state_data.twenty_five_percent_failure_round = -1;
     }
 
@@ -4782,7 +4786,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    if(state_file_status) {
+    if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         if(!(sector_display.sector_map = (char *) malloc(device_stats.num_sectors))) {
             malloc_error(errno);
             cleanup();
@@ -4798,7 +4802,7 @@ int main(int argc, char **argv) {
     device_stats.bytes_since_last_status_update = 0;
     bzero(&stress_test_stats, sizeof(stress_test_stats));
 
-    if(state_file_status) {
+    if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         log_log("Beginning stress test");
         num_rounds = state_data.bytes_written = state_data.bytes_read = 0;
     } else {
