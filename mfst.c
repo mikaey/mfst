@@ -990,6 +990,7 @@ int load_state() {
         log_log(str);
         free_buffers();
 
+        return LOAD_STATE_LOAD_ERROR;
     }
 
     // Ok, let's go ahead and start populating everything.
