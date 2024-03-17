@@ -4136,6 +4136,7 @@ int main(int argc, char **argv) {
     buf = NULL;
     compare_buf = NULL;
     zero_buf = NULL;
+    ff_buf = NULL;
     read_order = NULL;
     file_handles.lockfile_fd = -1;
     program_options.lock_file = NULL;
@@ -4176,6 +4177,10 @@ int main(int argc, char **argv) {
 
         if(zero_buf) {
             free(zero_buf);
+        }
+
+        if(ff_buf) {
+            free(ff_buf);
         }
 
         if(sector_display.sector_map) {
@@ -4752,6 +4757,27 @@ int main(int argc, char **argv) {
 
     memset(zero_buf, 0, device_stats.sector_size);
 
+    ff_buf = (char *) malloc(device_stats.sector_size);
+    if(!ff_buf) {
+        local_errno = errno;
+        snprintf(str, sizeof(str), "malloc() failed: %s", strerror(local_errno));
+        log_log(str);
+
+        message_window(stdscr, ERROR_TITLE, (char *[]) {
+            "Failed to allocate memory for one of the buffers we need to do the stress test.",
+            "Unfortunately this means we have to abort the stress test.",
+            "",
+            "The error we got while trying to allocate memory was:",
+            strerror(local_errno),
+            NULL
+        }, 1);
+
+        cleanup();
+        return -1;
+    }
+
+    memset(ff_buf, 0xff, device_stats.sector_size);
+
     compare_buf = (char *) valloc(device_stats.block_size);
     if(!compare_buf) {
         local_errno = errno;
@@ -5102,7 +5128,13 @@ int main(int argc, char **argv) {
                     if(memcmp(buf + j, compare_buf + j, device_stats.sector_size)) {
                         num_bad_sectors_this_round++;
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
-			  if(memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
+                            if(!memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all 0x00's); marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(str);
+                            } else if(!memcmp(compare_buf + j, ff_buf, device_stats.sector_size)) {
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all 0xff's); marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(str);
+                            } else {
                                 snprintf(str, sizeof(str), "Data verification failure in sector %lu; marking sector bad", cur_sector + (j / device_stats.sector_size));
                                 log_log(str);
                                 log_log("Expected data was:");
@@ -5139,9 +5171,6 @@ int main(int argc, char **argv) {
                                 log_log("");
 
                                 num_bad_sectors++;
-                            } else {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all zeroes); marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(str);
                             }
                         }
 
