@@ -1836,6 +1836,8 @@ int compare_bod_mod_data(int fd) {
     char *buffer;
     char str[256];
     size_t bytes_left_to_read, middle;
+    size_t matching_sectors = 0;
+    size_t partial_match_threshold = BOD_MOD_BUFFER_SIZE / device_stats.sector_size; // 50%
     int ret;
 
     if(!(buffer = malloc(BOD_MOD_BUFFER_SIZE))) {
@@ -1863,6 +1865,13 @@ int compare_bod_mod_data(int fd) {
     if(!memcmp(buffer, bod_buffer, BOD_MOD_BUFFER_SIZE)) {
         log_log("compare_bod_mod_data(): Beginning-of-device data matches");
         return 0;
+    } else {
+      // Do a sector-by-sector comparison and count up the sectors
+      for(bytes_left_to_read = 0; bytes_left_to_read < BOD_MOD_BUFFER_SIZE; bytes_left_to_read += device_stats.sector_size) {
+        if(!memcmp(buffer + bytes_left_to_read, bod_buffer + bytes_left_to_read, device_stats.sector_size)) {
+          matching_sectors++;
+        }
+      }
     }
 
     // Read in the middle 1MB.
@@ -1892,9 +1901,27 @@ int compare_bod_mod_data(int fd) {
     if(!memcmp(buffer, mod_buffer, BOD_MOD_BUFFER_SIZE)) {
         log_log("compare_bod_mod_data(): Middle-of-device data matches");
         return 0;
+    } else {
+      // Do a sector-by-sector comparison and count up the sectors
+      for(bytes_left_to_read = 0; bytes_left_to_read < BOD_MOD_BUFFER_SIZE; bytes_left_to_read += device_stats.sector_size) {
+        if(!memcmp(buffer + bytes_left_to_read, mod_buffer + bytes_left_to_read, device_stats.sector_size)) {
+          matching_sectors++;
+        }
+      }
+
+      if(matching_sectors >= partial_match_threshold) {
+        log_log("compare_bod_mod_data(): At least 50% of total sectors match");
+        return 0;
+      }
     }
 
-    log_log("compare_bod_mod_data(): Device data doesn't match");
+    if(matching_sectors > 0) {
+      snprintf(str, sizeof(str), "compare_bod_mod_data(): Device data doesn't match (only %lu sector(s) matched)", matching_sectors);
+    } else {
+      snprintf(str, sizeof(str), "compare_bod_mod_data(): Device data doesn't match (no sectors matched)");
+    }
+
+    log_log(str);
     return 1;
 }
 
