@@ -1325,7 +1325,7 @@ void multifree(int num_args, ...) {
  * @param seed  The seed to provide to the random number generator.
 */
 void init_random_number_generator(unsigned int seed) {
-    bzero(random_number_state_buf, sizeof(random_number_state_buf));
+    memset(random_number_state_buf, 0, sizeof(random_number_state_buf));
     initstate_r(seed, random_number_state_buf, sizeof(random_number_state_buf), &random_state);
     random_calls = 0;
 }
@@ -1826,7 +1826,7 @@ int compare_bod_mod_data(int fd) {
     while(bytes_left_to_read) {
         if((ret = read(fd, buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), bytes_left_to_read)) == -1) {
             // If we get a read error here, we'll just zero out the rest of the sector and move on.
-            bzero(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
+            memset(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
             bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
             if(lseek(fd, BOD_MOD_BUFFER_SIZE - bytes_left_to_read, SEEK_SET) == -1) {
                 snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
@@ -1862,7 +1862,7 @@ int compare_bod_mod_data(int fd) {
 
     while(bytes_left_to_read) {
         if((ret = read(fd, buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), bytes_left_to_read)) == -1) {
-            bzero(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
+            memset(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
             bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
             if(lseek(fd, middle + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), SEEK_SET) == -1) {
                 snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
@@ -2950,7 +2950,7 @@ size_t probe_device_size(int fd, size_t num_sectors, size_t optimal_block_size) 
             // For the read portion, we're just going to try to read the whole thing all at once
             if((ret = read(fd, readbuf + (slice_size - bytes_left), bytes_left)) == -1) {
                 // Ignore a read failure and just zero out the remainder of the buffer instead
-                bzero(buf + (slice_size - bytes_left), bytes_left);
+                memset(buf + (slice_size - bytes_left), 0, bytes_left);
                 bytes_left = 0;
             } else {
                 bytes_left -= ret;
@@ -3079,7 +3079,7 @@ size_t probe_device_size(int fd, size_t num_sectors, size_t optimal_block_size) 
             while(bytes_left) {
                 if((ret = read(fd, readbuf + (slice_size - bytes_left), bytes_left)) == -1) {
                     // Ignore a read failure and just zero out the remainder of the buffer instead
-                    bzero(buf + (slice_size - bytes_left), bytes_left);
+                    memset(buf + (slice_size - bytes_left), 0, bytes_left);
                     bytes_left = 0;
                 } else {
                     bytes_left -= ret;
@@ -3611,7 +3611,7 @@ int parse_command_line_arguments(int argc, char **argv) {
     };
 
     // Set the defaults for the command-line options
-    bzero(&program_options, sizeof(program_options));
+    memset(&program_options, 0, sizeof(program_options));
     program_options.stats_interval = 60;
 
     while(1) {
@@ -4248,8 +4248,8 @@ int main(int argc, char **argv) {
     }
 
     // Zero out the stress test stats and the device stats
-    bzero(&stress_test_stats, sizeof(stress_test_stats));
-    bzero(&device_stats, sizeof(device_stats));
+    memset(&stress_test_stats, 0, sizeof(stress_test_stats));
+    memset(&device_stats, 0, sizeof(device_stats));
 
     state_file_status = load_state();
 
@@ -4795,13 +4795,13 @@ int main(int argc, char **argv) {
         }
 
         // Initialize the sector map
-        bzero(sector_display.sector_map, device_stats.num_sectors);
+        memset(sector_display.sector_map, 0, device_stats.num_sectors);
         device_stats.num_bad_sectors = 0;
     }
 
     // Start filling up the device
     device_stats.bytes_since_last_status_update = 0;
-    bzero(&stress_test_stats, sizeof(stress_test_stats));
+    memset(&stress_test_stats, 0, sizeof(stress_test_stats));
 
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         log_log("Beginning stress test");
