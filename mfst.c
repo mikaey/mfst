@@ -3132,7 +3132,7 @@ void lseek_error_during_speed_test() {
     log_log(msg);
     log_log("probe_device_size(): Aborting speed tests");
 
-    message_window(stdscr, "WARNING", (char *[]) {
+    message_window(stdscr, WARNING_TITLE, (char *[]) {
         "We got an error while trying to move around the device.  It could be that the",
         "device was removed or experienced an error and disconnected itself.  If that's",
         "the case, the remainder of the tests are going to fail pretty quickly.",
@@ -4829,7 +4829,7 @@ int main(int argc, char **argv) {
         if(num_rounds > 0) {
             if(save_state()) {
                 log_log("Error creating save state, disabling save stating");
-                message_window(stdscr, "WARNING", (char *[]) {
+                message_window(stdscr, WARNING_TITLE, (char *[]) {
                     "An error occurred while trying to save the program state.  Save stating has been"
                     "disabled.",
                     NULL
@@ -4945,7 +4945,7 @@ int main(int argc, char **argv) {
                         // savestate.
                         if(save_state()) {
                             log_log("Error creating save state, disabling save stating");
-                            message_window(stdscr, "WARNING", (char *[]) {
+                            message_window(stdscr, WARNING_TITLE, (char *[]) {
                                 "An error occurred while trying to save the program state.  Save stating has been"
                                 "disabled.",
                                 NULL
@@ -4971,7 +4971,7 @@ int main(int argc, char **argv) {
                         // savestate.
                         if(save_state()) {
                             log_log("Error creating save state, disabling save stating");
-                            message_window(stdscr, "WARNING", (char *[]) {
+                            message_window(stdscr, WARNING_TITLE, (char *[]) {
                                 "An error occurred while trying to save the program state.  Save stating has been"
                                 "disabled.",
                                 NULL
