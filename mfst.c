@@ -19,534 +19,13 @@
 #include <curses.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <libudev.h>
-#include <json-c/json_object.h>
-#include <json-c/json_util.h>
-#include <json-c/json_pointer.h>
-#include <linux/usbdevice_fs.h>
 #include "mfst.h"
-#include "base64.h"
+#include "state.h"
+#include "device.h"
 
+// Since we use these strings so frequently, these are just here to save space
 const char *WARNING_TITLE = "WARNING";
 const char *ERROR_TITLE = "ERROR";
-
-unsigned long random_calls;
-unsigned long initial_seed;
-unsigned long current_seed;
-struct random_data random_state;
-char random_number_state_buf[256];
-char speed_qualifications_shown;
-char ncurses_active;
-char *forced_device;
-ssize_t num_rounds;
-int is_writing;
-
-// To handle device disconnects/reconnects, we're going to create a couple of
-// buffers where we hold the most recent 1MB of data that we wrote to the
-// beginning of the device (BOD) and middle of the device (MOD).  When a device
-// is reconnected, we'll read back those two segments.  One segment needs to be
-// a 100% match; we can be fuzzy about how much of the other segment matches.
-// I'm taking this approach in case we were in the middle of writing to one of
-// these two segments when the device was disconnected and we're not sure how
-// much of the data was actually committed (e.g., actually made it out of the
-// device's write cache and into permanent storage).
-char bod_buffer[BOD_MOD_BUFFER_SIZE];
-char mod_buffer[BOD_MOD_BUFFER_SIZE];
-
-struct {
-    double sequential_write_speed;
-    double sequential_read_speed;
-    double random_write_iops;
-    double random_read_iops;
-} device_speeds;
-
-typedef enum {
-    FAKE_FLASH_UNKNOWN,
-    FAKE_FLASH_YES,
-    FAKE_FLASH_NO
-} FakeFlashEnum;
-
-struct {
-    size_t num_sectors;
-    size_t num_bad_sectors;
-    size_t bytes_since_last_status_update;
-    size_t reported_size_bytes;
-    size_t detected_size_bytes;
-    int sector_size;
-    unsigned int physical_sector_size;
-    int preferred_block_size;
-    int block_size;
-    int max_request_size;
-    dev_t device_num;
-    FakeFlashEnum is_fake_flash;
-} device_stats;
-
-struct {
-    char *stats_file;
-    char *log_file;
-    char *device_name;
-    size_t stats_interval;
-    unsigned char probe_for_optimal_block_size;
-    char no_curses;      // What's the current setting of no-curses?
-    char orig_no_curses; // What was passed on the command line?
-    char dont_show_warning_message;
-    char *lock_file;
-    char *state_file;
-    size_t force_sectors;
-} program_options;
-
-struct {
-    FILE *log_file;
-    FILE *stats_file;
-    int lockfile_fd;
-} file_handles;
-
-struct {
-    size_t sectors_per_block;
-    char *sector_map;
-    size_t sectors_in_last_block;
-    size_t num_blocks;
-    size_t num_lines;
-    size_t blocks_per_line;
-} sector_display;
-
-struct {
-    struct timeval previous_update_time;
-    size_t previous_bytes_written;
-    size_t previous_bytes_read;
-    size_t previous_bad_sectors;
-} stress_test_stats;
-
-struct {
-    size_t bytes_read;
-    size_t bytes_written;
-    ssize_t first_failure_round;
-    ssize_t ten_percent_failure_round;
-    ssize_t twenty_five_percent_failure_round;
-} state_data;
-
-/**
- * Tests to see if the given JSON pointer exists in the specified object.
- * 
- * @param obj   The object to examine.
- * @param path  The JSON pointer to test for in the object.
- * 
- * @returns 0 if the specified property exists in obj, or -1 if it does not.
- */
-int test_json_pointer(struct json_object *obj, const char *path) {
-    struct json_object *child;
-    int ret;
-
-    ret = json_pointer_get(obj, path, &child);
-    
-    return ret;
-}
-
-/**
- * Saves the program state to the file named in program_options.state_file.
- * 
- * @returns 0 if the state was saved successfully, or if
- *          program_options.state_file is NULL.  Returns -1 if an error
- *          occurred.
-*/
-int save_state() {
-    struct json_object *root, *parent, *obj;
-    char *filename;
-    char *sector_map, *b64str;
-    size_t i, j;
-
-    // If no state file was specified, do nothing
-    if(!program_options.state_file) {
-        return 0;
-    }
-
-    // The json_object_new_* series of functions don't specify what the return
-    // value is if something goes wrong...so I'm just assuming that nothing
-    // *can* go wrong.  Totally a good idea, right?
-    root = json_object_new_object();
-
-    // Put together the device_geomery object
-    parent = json_object_new_object();
-
-    obj = json_object_new_uint64(device_stats.reported_size_bytes);
-    if(json_object_object_add(parent, "reported_size", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_uint64(device_stats.detected_size_bytes);
-    if(json_object_object_add(parent, "detected_size", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_int(device_stats.sector_size);
-    if(json_object_object_add(parent, "sector_size", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    if(json_object_object_add(root, "device_geometry", parent)) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    // Put together the device_info object
-    parent = json_object_new_object();
-
-    obj = json_object_new_int(device_stats.block_size);
-    if(json_object_object_add(parent, "block_size", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_double(device_speeds.sequential_read_speed);
-    if(json_object_object_add(parent, "sequential_read_speed", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_double(device_speeds.sequential_write_speed);
-    if(json_object_object_add(parent, "sequential_write_speed", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_double(device_speeds.random_read_iops);
-    if(json_object_object_add(parent, "random_read_iops", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_double(device_speeds.random_write_iops);
-    if(json_object_object_add(parent, "random_write_iops", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    if(json_object_object_add(root, "device_info", parent)) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    // Put together the program_options object
-    parent = json_object_new_object();
-
-    obj = json_object_new_boolean(program_options.orig_no_curses);
-    if(json_object_object_add(parent, "disable_curses", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    if(program_options.stats_file) {
-        if(filename = realpath(program_options.stats_file, NULL)) {
-            obj = json_object_new_string(filename);
-            free(filename);
-
-            if(json_object_object_add(parent, "stats_file", obj)) {
-                json_object_put(obj);
-                json_object_put(parent);
-                json_object_put(root);
-                return -1;
-            }
-
-            obj = json_object_new_uint64(program_options.stats_interval);
-            if(json_object_object_add(parent, "stats_interval", obj)) {
-                json_object_put(obj);
-                json_object_put(parent);
-                json_object_put(root);
-                return -1;
-            }
-        } else {
-            json_object_put(parent);
-            json_object_put(root);
-            return -1;
-        }
-    }
-
-    if(program_options.log_file) {
-        if(filename = realpath(program_options.log_file, NULL)) {
-            obj = json_object_new_string(filename);
-            free(filename);
-
-            if(json_object_object_add(parent, "log_file", obj)) {
-                json_object_put(obj);
-                json_object_put(parent);
-                json_object_put(root);
-                return -1;
-            }
-        } else {
-            json_object_put(parent);
-            json_object_put(root);
-            return -1;
-        }
-    }
-
-    if(filename = realpath(program_options.lock_file, NULL)) {
-        obj = json_object_new_string(filename);
-        free(filename);
-
-        if(json_object_object_add(parent, "lock_file", obj)) {
-            json_object_put(obj);
-            json_object_put(parent);
-            json_object_put(root);
-            return -1;
-        }
-    } else {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    if(json_object_object_add(root, "program_options", parent)) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    // Put together the state data.
-
-    parent = json_object_new_object();
-
-    // The strategy for savestating is that we're going to savestate once every
-    // round, at the end of the round.  In the event of a restart, we'll just
-    // start over from the beginning of that round.
-    //
-    // The sector map has info on whether each sector has been read/written in
-    // this round, as well as whether each sector has experienced an error.
-    // Really all we're concerned about is the bad sector flag -- so to save
-    // space, we'll compact that info down into a bitfield.  In the serialized
-    // version of the bitmap, each byte will represent 8 sectors, with the
-    // first sector being in the most significant bit and the last sector being
-    // in the least significant bit.
-    sector_map = (char *) malloc((device_stats.num_sectors / 8) + ((device_stats.num_sectors % 8) ? 1 : 0));
-    for(i = 0; i < device_stats.num_sectors; i += 8) {
-        sector_map[i / 8] = 0;
-        for(j = 0; j < 8; j++) {
-            if((i + j) < device_stats.num_sectors) {
-                sector_map[i / 8] = (sector_map[i / 8] << 1) | (sector_display.sector_map[i + j] & 0x01);
-            } else {
-                sector_map[i / 8] <<= 1;
-            }
-        }
-    }
-
-    b64str = base64_encode(sector_map, (device_stats.num_sectors / 8) + ((device_stats.num_sectors % 8) ? 1 : 0), NULL);
-    free(sector_map);
-
-    if(!b64str) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_string(b64str);
-    free(b64str);
-
-    if(json_object_object_add(parent, "sector_map", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    // Save the beginning-of-device and middle-of-device data.
-    if(!(b64str = base64_encode(bod_buffer, sizeof(bod_buffer), NULL))) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_string(b64str);
-    free(b64str);
-
-    if(json_object_object_add(parent, "beginning_of_device_data", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    if(!(b64str = base64_encode(mod_buffer, sizeof(mod_buffer), NULL))) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_string(b64str);
-    free(b64str);
-
-    if(json_object_object_add(parent, "middle_of_device_data", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_int64(num_rounds);
-    if(json_object_object_add(parent, "rounds_completed", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_uint64(state_data.bytes_read);
-    if(json_object_object_add(parent, "bytes_read", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    obj = json_object_new_uint64(state_data.bytes_written);
-    if(json_object_object_add(parent, "bytes_written", obj)) {
-        json_object_put(obj);
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    if(state_data.first_failure_round != -1) {
-        obj = json_object_new_int64(state_data.first_failure_round);
-        if(json_object_object_add(parent, "first_failure_round", obj)) {
-            json_object_put(obj);
-            json_object_put(parent);
-            json_object_put(root);
-            return -1;
-        }
-    }
-
-    if(state_data.ten_percent_failure_round != -1) {
-        obj = json_object_new_int64(state_data.ten_percent_failure_round);
-        if(json_object_object_add(parent, "ten_percent_failure_round", obj)) {
-            json_object_put(obj);
-            json_object_put(parent);
-            json_object_put(root);
-            return -1;
-        }
-    }
-
-    if(state_data.twenty_five_percent_failure_round != -1) {
-        obj = json_object_new_int64(state_data.twenty_five_percent_failure_round);
-        if(json_object_object_add(parent, "twenty_five_percent_failure_round", obj)) {
-            json_object_put(obj);
-            json_object_put(parent);
-            json_object_put(root);
-            return -1;
-        }
-    }
-
-    if(json_object_object_add(root, "state", parent)) {
-        json_object_put(parent);
-        json_object_put(root);
-        return -1;
-    }
-
-    // Write the state data to a temporary file in case we run into an error
-    // while calling json_object_to_file.
-    assert(filename = malloc(strlen(program_options.state_file) + 6));
-    sprintf(filename, "%s.temp", program_options.state_file);
-
-    if(json_object_to_file(filename, root)) {
-        free(filename);
-        json_object_put(root);
-        return -1;
-    }
-
-    json_object_put(root);
-
-    // Now move the temporary file overtop of the original.
-    if(rename(filename, program_options.state_file)) {
-        unlink(filename);
-        free(filename);
-        return -1;
-    }
-
-    free(filename);
-    return 0;
-}
-
-/**
- * Tries to determine whether the device was disconnected from the system.
- * 
- * @returns Non-zero if the device was disconnected from the system, or zero if
- *          the device appears to still be present (or if an error occurred)
- */
-int did_device_disconnect() {
-    const char *syspath, *device_size_str;
-    size_t device_size;
-    struct stat sysstat;
-    struct udev *udev_handle;
-    struct udev_device *udev_dev;
-
-    udev_handle = udev_new();
-    if(!udev_handle) {
-        return 0;
-    }
-
-    udev_dev = udev_device_new_from_devnum(udev_handle, 'b', device_stats.device_num);
-    if(!udev_dev) {
-        udev_unref(udev_handle);
-        return 1;
-    }
-
-    syspath = udev_device_get_syspath(udev_dev);
-    if(!syspath) {
-        udev_device_unref(udev_dev);
-        udev_unref(udev_handle);
-        return 1;
-    }
-
-    // Check to see if the path still exists
-    if(stat(syspath, &sysstat)) {
-        // Yeah, device went away...
-        udev_device_unref(udev_dev);
-        udev_unref(udev_handle);
-        return 1;
-    }
-
-    // Did the device's size change to 0?  (E.g., did the SD card get pulled
-    // out of the reader?)
-    device_size_str = udev_device_get_sysattr_value(udev_dev, "size");
-    if(!device_size_str) {
-        udev_device_unref(udev_dev);
-        udev_unref(udev_handle);
-        return 1;
-    }
-
-    device_size = strtoull(device_size_str, NULL, 10);
-    if(!device_size) {
-        udev_device_unref(udev_dev);
-        udev_unref(udev_handle);
-        return 1;
-    }
-
-    // Nope, device is still there.
-    udev_device_unref(udev_dev);
-    udev_unref(udev_handle);
-    return 0;
-}
 
 /**
  * Calculates the difference between two given time values.
@@ -612,438 +91,6 @@ void log_log(char *msg) {
         printf("[%s] %s\n", t, msg);
         syncfs(1);
     }
-}
-
-/**
- * Loads the program state from the file named in program_options.state_file.
- * 
- * @returns LOAD_STATE_SUCCESS if a state file was present and loaded
- *          successfully,
- *          LOAD_STATE_FILE_NOT_SPECIFIED if program_options.state_file is set
- *          to NULL,
- *          LOAD_STATE_FILE_DOES_NOT_EXIST if the specified state file does not
- *          exist, or
- *          LOAD_STATE_LOAD_ERROR if an error occurred.
- */
-int load_state() {
-    struct stat statbuf;
-    struct json_object *root, *obj;
-    char str[256];
-    int i;
-    char *buffer;
-    size_t detected_size, sector_size, k, l;
-
-    // A bunch of constants for the JSON pointers to our JSON object
-    const char *reported_size_ptr = "/device_geometry/reported_size";
-    const char *detected_size_ptr = "/device_geometry/detected_size";
-    const char *sector_size_ptr = "/device_geometry/sector_size";
-    const char *block_size_ptr = "/device_info/block_size";
-    const char *sequential_read_speed_ptr = "/device_info/sequential_read_speed";
-    const char *sequential_write_speed_ptr = "/device_info/sequential_write_speed";
-    const char *random_read_iops_ptr = "/device_info/random_read_iops";
-    const char *random_write_iops_ptr = "/device_info/random_write_iops";
-    const char *disable_curses_ptr = "/program_options/disable_curses";
-    const char *stats_file_ptr = "/program_options/stats_file";
-    const char *log_file_ptr = "/program_options/log_file";
-    const char *lock_file_ptr = "/program_options/lock_file";
-    const char *stats_interval_ptr = "/program_options/stats_interval";
-    const char *sector_map_ptr = "/state/sector_map";
-    const char *bod_data_ptr = "/state/beginning_of_device_data";
-    const char *mod_data_ptr = "/state/middle_of_device_data";
-    const char *rounds_completed_ptr = "/state/rounds_completed";
-    const char *bytes_read_ptr = "/state/bytes_read";
-    const char *bytes_written_ptr = "/state/bytes_written";
-    const char *ffr_ptr = "/state/first_failure_round";
-    const char *tpfr_ptr = "/state/ten_percent_failure_round";
-    const char *tfpfr_ptr = "/state/twenty_five_percent_failure_round";
-
-    const char *all_props[] = {
-        reported_size_ptr,
-        detected_size_ptr,
-        sector_size_ptr,
-        block_size_ptr,
-        sequential_read_speed_ptr,
-        sequential_write_speed_ptr,
-        random_read_iops_ptr,
-        random_write_iops_ptr,
-        disable_curses_ptr,
-        stats_file_ptr,
-        log_file_ptr,
-        lock_file_ptr,
-        stats_interval_ptr,
-        sector_map_ptr,
-        bod_data_ptr,
-        mod_data_ptr,
-        rounds_completed_ptr,
-        bytes_read_ptr,
-        bytes_written_ptr,
-        ffr_ptr,
-        tpfr_ptr,
-        tfpfr_ptr,
-        NULL
-    };
-
-    const json_type prop_types[] = {
-        json_type_int,     // reported_size_ptr
-        json_type_int,     // detected_size_ptr
-        json_type_int,     // sector_size_ptr
-        json_type_int,     // block_size_ptr
-        json_type_double,  // sequential_read_speed_ptr
-        json_type_double,  // sequential_write_speed_ptr
-        json_type_double,  // random_read_iops_ptr
-        json_type_double,  // random_write_iops_ptr
-        json_type_boolean, // disable_curses_ptr
-        json_type_string,  // stats_file_ptr
-        json_type_string,  // log_file_ptr
-        json_type_string,  // lock_file_ptr
-        json_type_int,     // stats_interval_ptr
-        json_type_string,  // sector_map_ptr
-        json_type_string,  // bod_data_ptr
-        json_type_string,  // mod_data_ptr
-        json_type_int,     // rounds_completed_ptr
-        json_type_int,     // bytes_read_ptr
-        json_type_int,     // bytes_written_ptr
-        json_type_int,     // ffr_ptr
-        json_type_int,     // tpfr_ptr
-        json_type_int      // tfpfr_ptr
-    };
-
-    const int required_props[] = {
-        1, // reported_size_ptr
-        1, // detected_size_ptr
-        1, // sector_size_ptr
-        1, // block_size_ptr
-        1, // sequential_read_speed_ptr
-        1, // sequential_write_speed_ptr
-        1, // random_read_iops_ptr
-        1, // random_write_iops_ptr
-        0, // disable_curses_ptr
-        0, // stats_file_ptr
-        0, // log_file_ptr
-        0, // lock_file_ptr
-        0, // stats_interval_ptr
-        1, // sector_map_ptr
-        1, // bod_data_ptr
-        1, // mod_data_ptr
-        1, // rounds_completed_ptr
-        1, // bytes_read_ptr
-        1, // bytes_written_ptr
-        0, // ffr_ptr
-        0, // tpfr_ptr
-        0  // tfpfr_ptr
-    };
-
-    const int base64_props[] = {
-        0, // reported_size_ptr
-        0, // detected_size_ptr
-        0, // sector_size_ptr
-        0, // block_size_ptr
-        0, // sequential_read_speed_ptr
-        0, // sequential_write_speed_ptr
-        0, // random_read_iops_ptr
-        0, // random_write_iops_ptr
-        0, // disable_curses_ptr
-        0, // stats_file_ptr
-        0, // log_file_ptr
-        0, // lock_file_ptr
-        0, // stats_interval_ptr
-        1, // sector_map_ptr
-        1, // bod_data_ptr
-        1, // mod_data_ptr
-        0, // rounds_completed_ptr
-        0, // bytes_read_ptr
-        0, // bytes_written_ptr
-        0, // ffr_ptr
-        0, // tpfr_ptr
-        0  // tfpfr_ptr
-    };
-
-    char *buffers[] = {
-        NULL, // reported_size_ptr
-        NULL, // detected_size_ptr
-        NULL, // sector_size_ptr
-        NULL, // block_size_ptr
-        NULL, // sequential_read_speed_ptr
-        NULL, // sequential_write_speed_ptr
-        NULL, // random_read_iops_ptr
-        NULL, // random_write_iops_ptr
-        NULL, // disable_curses_ptr
-        NULL, // stats_file_ptr
-        NULL, // log_file_ptr
-        NULL, // lock_file_ptr
-        NULL, // stats_interval_ptr
-        NULL, // sector_map_ptr
-        NULL, // bod_data_ptr
-        NULL, // mod_data_ptr
-        NULL, // rounds_completed_ptr
-        NULL, // bytes_read_ptr
-        NULL, // bytes_written_ptr
-        NULL, // ffr_ptr
-        NULL, // tpfr_ptr
-        NULL, // tfpfr_ptr
-    };
-
-    size_t buffer_lens[] = {
-        0, // reported_size_ptr
-        0, // detected_size_ptr
-        0, // sector_size_ptr
-        0, // block_size_ptr
-        0, // sequential_read_speed_ptr
-        0, // sequential_write_speed_ptr
-        0, // random_read_iops_ptr
-        0, // random_write_iops_ptr
-        0, // disable_curses_ptr
-        0, // stats_file_ptr
-        0, // log_file_ptr
-        0, // lock_file_ptr
-        0, // stats_interval_ptr
-        0, // sector_map_ptr
-        0, // bod_data_ptr
-        0, // mod_data_ptr
-        0, // rounds_completed_ptr
-        0, // bytes_read_ptr
-        0, // bytes_written_ptr
-        0, // ffr_ptr
-        0, // tpfr_ptr
-        0, // tfpfr_ptr
-    };
-
-    void *destinations[] = {
-        &device_stats.reported_size_bytes,
-        &device_stats.detected_size_bytes,
-        &device_stats.sector_size,
-        &device_stats.block_size,
-        &device_speeds.sequential_read_speed,
-        &device_speeds.sequential_write_speed,
-        &device_speeds.random_read_iops,
-        &device_speeds.random_write_iops,
-        &program_options.no_curses,
-        &program_options.stats_file,
-        &program_options.log_file,
-        &program_options.lock_file,
-        &program_options.stats_interval,
-        &sector_display.sector_map,
-        bod_buffer,
-        mod_buffer,
-        &num_rounds,
-        &state_data.bytes_read,
-        &state_data.bytes_written,
-        &state_data.first_failure_round,
-        &state_data.ten_percent_failure_round,
-        &state_data.twenty_five_percent_failure_round
-    };
-
-    void free_buffers() {
-        int j;
-        json_object_put(root);
-
-        for(j = 0; all_props[j]; j++) {
-            if(buffers[j]) {
-                free(buffers[j]);
-            }
-        }
-    }
-
-    if(!program_options.state_file) {
-        return LOAD_STATE_FILE_NOT_SPECIFIED;
-    }
-
-    if(stat(program_options.state_file, &statbuf) == -1) {
-        if(errno == ENOENT) {
-            log_log("load_state(): state file not present");
-            return LOAD_STATE_FILE_DOES_NOT_EXIST;
-        } else {
-            snprintf(str, sizeof(str), "load_state(): unable to stat() state file: %s", strerror(errno));
-            log_log(str);
-            return LOAD_STATE_LOAD_ERROR;
-        }
-    }
-
-    if(!(root = json_object_from_file(program_options.state_file))) {
-        snprintf(str, sizeof(str), "load_state(): Unable to load state file: %s", json_util_get_last_err());
-        log_log(str);
-        return LOAD_STATE_LOAD_ERROR;
-    }
-
-    // Validate the JSON before we try to load anything from it.
-    for(i = 0; all_props[i]; i++) {
-        // Make sure required properties are present in the file.
-        if(required_props[i] && test_json_pointer(root, all_props[i])) {
-            snprintf(str, sizeof(str), "load_state(): Rejecting state file: required property %s is missing from JSON", all_props[i]);
-            log_log(str);
-            json_object_put(root);
-            return LOAD_STATE_LOAD_ERROR;
-        }
-
-        // Make sure data types match.
-        if(!json_pointer_get(root, all_props[i], &obj)) {
-            if(json_object_get_type(obj) == json_type_null) {
-                json_object_put(obj);
-                continue;
-            }
-
-            if((prop_types[i] == json_type_double && json_object_get_type(obj) != json_type_int && json_object_get_type(obj) != json_type_double) ||
-                (prop_types[i] != json_type_double && json_object_get_type(obj) != prop_types[i])) {
-                snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s has an incorrect data type", all_props[i]);
-                log_log(str);
-                free_buffers();
-
-                return LOAD_STATE_LOAD_ERROR;
-            }
-
-            // Make sure numeric values are greater than 0 and strings are more
-            // than 0 characters in length
-            if(prop_types[i] == json_type_int) {
-                if(json_object_get_uint64(obj) == 0) {
-                    snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
-                    log_log(str);
-                    free_buffers();
-
-                    return LOAD_STATE_LOAD_ERROR;
-                }
-            } else if(prop_types[i] == json_type_double) {
-                if(json_object_get_double(obj) <= 0) {
-                    snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
-                    log_log(str);
-                    free_buffers();
-
-                    return LOAD_STATE_LOAD_ERROR;
-                }
-            } else if(prop_types[i] == json_type_string) {
-                // Go ahead and copy it over to a buffer
-                buffers[i] = malloc(json_object_get_string_len(obj) + 1);
-                if(!buffers[i]) {
-                    snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
-                    log_log(str);
-                    free_buffers();
-
-                    return LOAD_STATE_LOAD_ERROR;
-                }
-
-                strcpy(buffers[i], json_object_get_string(obj));
-
-                if(base64_props[i]) {
-                    // Base64-decode it and put that into buffers[i] instead
-                    buffer = base64_decode(buffers[i], json_object_get_string_len(obj), &buffer_lens[i]);
-                    if(!buffer) {
-                        snprintf(str, sizeof(str), "load_state(): Rejecting state file: unable to Base64-decode %s", all_props[i]);
-                        log_log(str);
-                        free_buffers();
-
-                        return LOAD_STATE_LOAD_ERROR;
-                    }
-
-                    free(buffers[i]);
-                    buffers[i] = buffer;
-                }
-            }
-
-            if(all_props[i] == detected_size_ptr) {
-                detected_size = json_object_get_uint64(obj);
-            } else if(all_props[i] == sector_size_ptr) {
-                sector_size = json_object_get_uint64(obj);
-            }
-
-        }
-    }
-
-    // Make sure our Base64-encoded strings are the correct length.
-    size_t expected_lens[] = {
-        -1,                  // reported_size_ptr
-        -1,                  // detected_size_ptr
-        -1,                  // sector_size_ptr
-        -1,                  // block_size_ptr
-        -1,                  // sequential_read_speed_ptr
-        -1,                  // sequential_write_speed_ptr
-        -1,                  // random_read_iops_ptr
-        -1,                  // random_write_iops_ptr
-        -1,                  // disable_curses_ptr
-        -1,                  // stats_file_ptr
-        -1,                  // log_file_ptr
-        -1,                  // lock_file_ptr
-        -1,                  // stats_interval_ptr
-                             // sector_map_ptr
-        (detected_size / sector_size) / 8 + (((detected_size / sector_size) % 8) ? 1 : 0),
-        BOD_MOD_BUFFER_SIZE, // bod_data_ptr
-        BOD_MOD_BUFFER_SIZE, // mod_data_ptr
-        -1,                  // rounds_completed_ptr
-        -1,                  // bytes_read_ptr
-        -1,                  // bytes_written_ptr
-        -1,                  // ffr_ptr
-        -1,                  // tpfr_ptr
-        -1                   // tfpfr_ptr
-    };
-
-    for(i = 0; all_props[i]; i++) {
-        if(base64_props[i] && (buffer_lens[i] != expected_lens[i])) {
-            snprintf(str, sizeof(str), "load_state(): Rejecting state file: %s contains the wrong amount of data", all_props[i]);
-            log_log(str);
-            free_buffers();
-
-            return LOAD_STATE_LOAD_ERROR;
-        }
-    }
-
-    // Allocate memory for the sector map, which we'll need to unpack later
-    if(!(sector_display.sector_map = malloc(detected_size / sector_size))) {
-        snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
-        log_log(str);
-        free_buffers();
-
-        return LOAD_STATE_LOAD_ERROR;
-    }
-
-    // Ok, let's go ahead and start populating everything.
-    // I've tried to craft this so that if we make it to this point, we can't
-    // fail -- we don't want to start overwriting global variables and then
-    // have something happen that would leave those variables in an
-    // inconsistent state.
-    for(i = 0; all_props[i]; i++) {
-        if(json_pointer_get(root, all_props[i], &obj)) {
-            continue;
-        }
-
-        if(json_object_get_type(obj) == json_type_null) {
-            continue;
-        }
-
-        if(prop_types[i] == json_type_int) {
-            if(all_props[i] == sector_size_ptr || all_props[i] == block_size_ptr) {
-                *((int *) destinations[i]) = json_object_get_int(obj);
-            } else if(all_props[i] == ffr_ptr || all_props[i] == tpfr_ptr || all_props[i] == tfpfr_ptr) {
-                *((ssize_t *) destinations[i]) = json_object_get_int64(obj);
-            } else {
-                *((size_t *) destinations[i]) = json_object_get_uint64(obj);
-            }
-        } else if(prop_types[i] == json_type_double) {
-            *((double *) destinations[i]) = json_object_get_double(obj);
-        } else if(prop_types[i] == json_type_boolean) {
-            *((char *) destinations[i]) = json_object_get_boolean(obj);
-        } else if(prop_types[i] == json_type_string) {
-            // bod_buffer and mod_buffer have to handled specially because
-            // we have statically allocated buffers for them
-            if(all_props[i] == bod_data_ptr || all_props[i] == mod_data_ptr) {
-                memcpy(destinations[i], buffers[i], BOD_MOD_BUFFER_SIZE);
-                free(buffers[i]);
-            } else if(all_props[i] == sector_map_ptr) {
-                // We need to unpack the sector map
-                for(k = 0; k < buffer_lens[i]; k++) {
-                    for(l = 0; l < 8; l++) {
-                        if((k + l) < buffer_lens[i]) {
-                            sector_display.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
-                        }
-                    }
-                }
-
-                free(buffers[i]);
-            } else {
-                *((char **) destinations[i]) = buffers[i];
-            }
-        }
-    }
-
-    json_object_put(root);
-    return LOAD_STATE_SUCCESS;
 }
 
 /**
@@ -1675,10 +722,11 @@ int handle_key_inputs(WINDOW *curwin) {
         erase();
         redraw_screen();
 
-        refresh();
         if(curwin) {
-            redrawwin(curwin);
+            touchwin(curwin);
         }
+
+        refresh();
 
         return ERR;
     }
@@ -1759,7 +807,7 @@ WINDOW *message_window(WINDOW *parent, const char *title, char **msg, char wait)
         return NULL;
     }
 
-    window = subwin(parent, lines + 2 + (wait ? 2 : 0), longest + 4, (LINES - (lines + 2 + (wait ? 2 : 0))) / 2, (COLS - (longest + 4)) / 2);
+    window = newwin(lines + 2 + (wait ? 2 : 0), longest + 4, (LINES - (lines + 2 + (wait ? 2 : 0))) / 2, (COLS - (longest + 4)) / 2);
     nodelay(window, TRUE);
     werase(window);
     box(window, 0, 0);
@@ -1780,7 +828,6 @@ WINDOW *message_window(WINDOW *parent, const char *title, char **msg, char wait)
         wattroff(window, A_BOLD);
     }
 
-    touchwin(parent);
     wrefresh(window);
 
     if(wait) {
@@ -1791,568 +838,6 @@ WINDOW *message_window(WINDOW *parent, const char *title, char **msg, char wait)
         return NULL;
     } else {
         return window;
-    }
-}
-
-/**
- * Reads the beginning-of-device and middle-of-device data and compares it with
- * what is stored in bod_buffer/mod_buffer.
- * 
- * @param fd  A handle to the device with the data to compare.
- * @returns 0 if either the BOD or MOD data is an exact match, 1 if the data
- *          did not match, or -1 if an error occurred.
- */
-int compare_bod_mod_data(int fd) {
-    char *buffer;
-    char str[256];
-    size_t bytes_left_to_read, middle;
-    size_t matching_sectors = 0;
-    size_t partial_match_threshold = BOD_MOD_BUFFER_SIZE / device_stats.sector_size; // 50%
-    int ret;
-
-    if(!(buffer = malloc(BOD_MOD_BUFFER_SIZE))) {
-        snprintf(str, sizeof(str), "compare_bod_mod_data: malloc() failed: %s", strerror(errno));
-        return -1;
-    }
-
-    // Read in the first 1MB.
-    bytes_left_to_read = BOD_MOD_BUFFER_SIZE;
-    while(bytes_left_to_read) {
-        if((ret = read(fd, buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), bytes_left_to_read)) == -1) {
-            // If we get a read error here, we'll just zero out the rest of the sector and move on.
-            memset(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
-            bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
-            if(lseek(fd, BOD_MOD_BUFFER_SIZE - bytes_left_to_read, SEEK_SET) == -1) {
-                snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
-                log_log(str);
-                return -1;
-            }
-        } else {
-            bytes_left_to_read -= ret;
-        }
-    }
-
-    if(!memcmp(buffer, bod_buffer, BOD_MOD_BUFFER_SIZE)) {
-        log_log("compare_bod_mod_data(): Beginning-of-device data matches");
-        return 0;
-    } else {
-      // Do a sector-by-sector comparison and count up the sectors
-      for(bytes_left_to_read = 0; bytes_left_to_read < BOD_MOD_BUFFER_SIZE; bytes_left_to_read += device_stats.sector_size) {
-        if(!memcmp(buffer + bytes_left_to_read, bod_buffer + bytes_left_to_read, device_stats.sector_size)) {
-          matching_sectors++;
-        }
-      }
-    }
-
-    // Read in the middle 1MB.
-    bytes_left_to_read = BOD_MOD_BUFFER_SIZE;
-    middle = device_stats.detected_size_bytes / 2;
-
-    if(lseek(fd, middle, SEEK_SET) == -1) {
-        snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
-        log_log(str);
-        return -1;
-    }
-
-    while(bytes_left_to_read) {
-        if((ret = read(fd, buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), bytes_left_to_read)) == -1) {
-            memset(buffer + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
-            bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
-            if(lseek(fd, middle + (BOD_MOD_BUFFER_SIZE - bytes_left_to_read), SEEK_SET) == -1) {
-                snprintf(str, sizeof(str), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
-                log_log(str);
-                return -1;
-            }
-        } else {
-            bytes_left_to_read -= ret;
-        }
-    }
-
-    if(!memcmp(buffer, mod_buffer, BOD_MOD_BUFFER_SIZE)) {
-        log_log("compare_bod_mod_data(): Middle-of-device data matches");
-        return 0;
-    } else {
-      // Do a sector-by-sector comparison and count up the sectors
-      for(bytes_left_to_read = 0; bytes_left_to_read < BOD_MOD_BUFFER_SIZE; bytes_left_to_read += device_stats.sector_size) {
-        if(!memcmp(buffer + bytes_left_to_read, mod_buffer + bytes_left_to_read, device_stats.sector_size)) {
-          matching_sectors++;
-        }
-      }
-
-      if(matching_sectors >= partial_match_threshold) {
-        log_log("compare_bod_mod_data(): At least 50% of total sectors match");
-        return 0;
-      }
-    }
-
-    if(matching_sectors > 0) {
-      snprintf(str, sizeof(str), "compare_bod_mod_data(): Device data doesn't match (only %lu sector(s) matched)", matching_sectors);
-    } else {
-      snprintf(str, sizeof(str), "compare_bod_mod_data(): Device data doesn't match (no sectors matched)");
-    }
-
-    log_log(str);
-    return 1;
-}
-
-/**
- * Compares the two devices and determines whether they are identical.
- * 
- * @returns 0 if the two devices are identical; 1 if they are not, if one or
- *          both of the specified devices do not exist, or if one or both of
- *          the specified devices aren't actually devices; or -1 if an error
- *          occurred.
- */
-int are_devices_identical(const char *devname1, const char *devname2) {
-    struct stat devstat1, devstat2;
-
-    if(stat(devname1, &devstat1)) {
-        if(errno == ENOENT) {
-            // Non-existant devices shall be considered non-identical.
-            return 1;
-        } else {
-            return -1;
-        }
-    }
-
-    if(stat(devname2, &devstat2)) {
-        if(errno == ENOENT) {
-            return 1;
-        } else {
-            return -1;
-        }
-    }
-
-    if(!S_ISBLK(devstat1.st_mode) || !S_ISBLK(devstat2.st_mode) || !S_ISCHR(devstat1.st_mode) || !S_ISCHR(devstat2.st_mode)) {
-        return 1;
-    }
-
-    if((devstat1.st_mode & S_IFMT) != (devstat2.st_mode & S_IFMT)) {
-        // Devices aren't the same type
-        return 1;
-    }
-
-    if(devstat1.st_rdev != devstat2.st_rdev) {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
- * Looks at all block devices for one that matches the geometry described in
- * device_stats and whose BOD/MOD data matches either bod_buffer or mod_buffer,
- * respectively.  If it finds it, it opens it and returns the file handle for
- * it.
- *
- * @param must_match_cmdline  Indicates whether the device found must match the
- *                            one specified in program_options->device_name.  If
- *                            zero, or if program_options.device_name is NULL,
- *                            any device may be matched.  If non-zero, the
- *                            device must be the same as the one in
- *                            program_options.device_name.
- * 
- * @returns The file handle to the device, 0 if no matching device could be
- *          found, -1 if an error occurred while searching for the device, -2
- *          if multiple matching devices were found, or -3 if a single device
- *          was found but it doesn't match what was specified on the command
- *          line.
- */
-int find_device(char must_match_cmdline) {
-    struct udev *udev_handle;
-    struct udev_enumerate *udev_enum;
-    struct udev_list_entry *list_entry;
-    struct udev_device *device;
-    const char *dev_size_str, *dev_name;
-    size_t dev_size;
-    int fd, ret, i;
-    char **matched_devices = NULL;
-    int num_matches = 0;
-    char str[256];
-    struct stat fs;
-
-    udev_handle = udev_new();
-    if(!udev_handle) {
-        log_log("find_device(): udev_new() failed");
-        return -1;
-    }
-
-    if(!(udev_enum = udev_enumerate_new(udev_handle))) {
-        log_log("find_device(): udev_enumerate_new() failed");
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    if(udev_enumerate_add_match_subsystem(udev_enum, "block") < 0) {
-        log_log("find_device(): udev_enumerate_add_match_subsystem() failed");
-        udev_enumerate_unref(udev_enum);
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    if(udev_enumerate_scan_devices(udev_enum) < 0) {
-        log_log("find_devices(): udev_enumerate_scan_devices() failed");
-        udev_enumerate_unref(udev_enum);
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    if(!(list_entry = udev_enumerate_get_list_entry(udev_enum))) {
-        // This scenario has to be an error.  What system wouldn't have any
-        // block devices??
-        log_log("find_devices(): udev_enumerate_get_list_entry() failed");
-        udev_enumerate_unref(udev_enum);
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    while(list_entry) {
-        if(!(device = udev_device_new_from_syspath(udev_handle, udev_list_entry_get_name(list_entry)))) {
-            list_entry = udev_list_entry_get_next(list_entry);
-            continue;
-        }
-
-        if(!(dev_size_str = udev_device_get_sysattr_value(device, "size"))) {
-            udev_device_unref(device);
-            list_entry = udev_list_entry_get_next(list_entry);
-            continue;
-        }
-
-        if(!(dev_name = udev_device_get_devnode(device))) {
-            udev_device_unref(device);
-            list_entry = udev_list_entry_get_next(list_entry);
-            continue;
-        }
-
-        snprintf(str, sizeof(str), "find_device(): Looking at device %s", dev_name);
-        log_log(str);
-
-        dev_size = strtoull(dev_size_str, NULL, 10) * 512;
-        if(dev_size != device_stats.reported_size_bytes) {
-            snprintf(str, sizeof(str), "find_device(): Rejecting device %s: device size doesn't match", dev_name);
-            udev_device_unref(device);
-            list_entry = udev_list_entry_get_next(list_entry);
-            continue;
-        }
-
-        if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-            snprintf(str, sizeof(str), "find_device(): Rejecting device %s: open() returned an error: %s", dev_name, strerror(errno));
-            log_log(str);
-
-            udev_device_unref(device);
-            list_entry = udev_list_entry_get_next(list_entry);
-            continue;
-        }
-
-        ret = compare_bod_mod_data(fd);
-        close(fd);
-
-        if(ret) {
-            if(ret == -1) {
-                snprintf(str, sizeof(str),
-                    "find_device(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
-            } else {
-                snprintf(str, sizeof(str), "find_device(): Rejecting device %s: beginning-of-device and middle-of-device data doesn't match what's in the state file", dev_name);
-            }
-
-            log_log(str);
-            udev_device_unref(device);
-            list_entry = udev_list_entry_get_next(list_entry);
-            continue;
-        }
-
-        snprintf(str, sizeof(str), "find_device(): Got a match on device %s", dev_name);
-        log_log(str);
-
-        // Add the device to our list of devices
-        if(!(matched_devices = realloc(matched_devices, ++num_matches * sizeof(char *)))) {
-            snprintf(str, sizeof(str), "find_device(): realloc() failed: %s", strerror(errno));
-            udev_device_unref(device);
-            udev_enumerate_unref(udev_enum);
-            udev_unref(udev_handle);
-            return -1;
-        }
-
-        if(!(matched_devices[num_matches - 1] = malloc(strlen(dev_name) + 1))) {
-            snprintf(str, sizeof(str), "find_devices(): malloc() failed: %s", strerror(errno));
-            udev_device_unref(device);
-            udev_enumerate_unref(udev_enum);
-            udev_unref(udev_handle);
-            return -1;
-        }
-
-        strcpy(matched_devices[num_matches - 1], dev_name);
-        udev_device_unref(device);
-        list_entry = udev_list_entry_get_next(list_entry);
-    }
-
-    // We're done with udev now
-    udev_enumerate_unref(udev_enum);
-    udev_unref(udev_handle);
-
-    if(!num_matches) {
-        log_log("find_device(): No matching devices found");
-        return 0;
-    } else if(num_matches == 1) {
-        // Did the user specify a device on the command line?
-        if(program_options.device_name && must_match_cmdline) {
-            // Does it match the device we found?
-            if(are_devices_identical(program_options.device_name, matched_devices[0])) {
-                // Nope
-                log_log("find_device(): Found a matching device, but it doesn't match the one specified on the command line");
-                free(matched_devices[0]);
-                free(matched_devices);
-                return -3;
-            }
-        } else {
-            if(!(program_options.device_name = malloc(strlen(matched_devices[0]) + 1))) {
-                snprintf(str, sizeof(str), "find_device(): malloc() failed: %s", strerror(errno));
-                log_log(str);
-                free(matched_devices[0]);
-                free(matched_devices);
-                return -1;
-            }
-
-            strcpy(program_options.device_name, matched_devices[0]);
-        }
-    } else {
-        // Did the user specify a device on the command line?
-        if(program_options.device_name) {
-            // Does it match one of the devices we found?
-            ret = 0;
-            for(i = 0; i < num_matches; i++) {
-                if(!are_devices_identical(program_options.device_name, matched_devices[i])) {
-                    // Cool, we found a match.  We'll just leave
-                    // program_options.device_name alone.
-                    ret = 1;
-                }
-            }
-
-           if(!ret) {
-                // Nope
-                for(i = 0; i < num_matches; i++) {
-                    free(matched_devices[i]);
-                }
-
-                log_log("find_device(): Found multiple matching devices, please specify which device we should use on the command line");
-                return -2;
-            }
-        } else {
-            // User didn't specify a device on the command line
-            for(i = 0; i < num_matches; i++) {
-                free(matched_devices[i]);
-            }
-
-            free(matched_devices);
-            return -2;
-        }
-    }
-
-    // Ok, we have a single match.  Grab the device number for it.
-    if(stat(program_options.device_name, &fs) == -1) {
-        snprintf(str, sizeof(str), "find_device(): Got a match on %s, but got an error while trying to stat() it: %s",
-            program_options.device_name, strerror(errno));
-        log_log(str);
-        log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
-
-        for(i = 0; i < num_matches; i++) {
-            free(matched_devices[i]);
-        }
-
-        free(matched_devices);
-        return -1;
-    }
-
-    device_stats.device_num = fs.st_rdev;
-
-    // Ok, we have a single match.  Re-open the device read/write.
-    if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
-        // Well crap.
-        snprintf(str, sizeof(str), "find_device(): Got a match on %s, but got an error while trying to re-open() it: %s",
-            matched_devices[0], strerror(errno));
-        log_log(str);
-        log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
-
-        for(i = 0; i < num_matches; i++) {
-            free(matched_devices[i]);
-        }
-
-        free(matched_devices);
-        return -1;
-    }
-
-    return fd;
-}
-
-/**
- * Monitor for new block devices.  When a new block device is detected, compare
- * it to the information we know about our original device.  If it's a match,
- * open a new file handle for it.
- * 
- * @returns A new file descriptor for the new device, or -1 if an error
- *          occurred.
- */
-int wait_for_device_reconnect() {
-    struct udev_monitor *monitor;
-    struct udev_device *device;
-    struct udev *udev_handle;
-    const char *dev_size_str;
-    const char *dev_name;
-    char str[256];
-    size_t dev_size;
-    int fd, ret;
-    char *buffer;
-    struct stat fs;
-
-    if(!(buffer = (char *) malloc(BOD_MOD_BUFFER_SIZE))) {
-        snprintf(str, sizeof(str), "wait_for_device_reconnect(): Unable to allocate memory for buffer: %s", strerror(errno));
-        log_log(str);
-        return -1;
-    }
-
-    udev_handle = udev_new();
-    if(!udev_handle) {
-        free(buffer);
-        return -1;
-    }
-
-    monitor = udev_monitor_new_from_netlink(udev_handle, "udev");
-    if(!monitor) {
-        snprintf(str, sizeof(str), "wait_for_device_reconnect(): udev_monitor_new_from_nelink() returned NULL");
-        log_log(str);
-
-        udev_unref(udev_handle);
-        free(buffer);
-        return -1;
-    }
-
-    if(udev_monitor_filter_add_match_subsystem_devtype(monitor, "block", "disk") < 0) {
-        snprintf(str, sizeof(str), "wait_for_device_reconnect(): udev_monitor_filter_add_match_subsystem_devtype() returned an error");
-        log_log(str);
-
-        udev_monitor_unref(monitor);
-        udev_unref(udev_handle);
-        free(buffer);
-        return -1;
-    }
-
-    if(udev_monitor_enable_receiving(monitor) < 0) {
-        snprintf(str, sizeof(str), "wait_for_device_reconnect(): udev_monitor_enable_receiving() returned an error");
-        log_log(str);
-
-        udev_monitor_unref(monitor);
-        udev_unref(udev_handle);
-        free(buffer);
-        return -1;
-    }
-
-    while(1) {
-        while(device = udev_monitor_receive_device(monitor)) {
-            dev_name = udev_device_get_devnode(device);
-            if(!dev_name) {
-                // Can't even get the name of the device... :-(
-                udev_device_unref(device);
-                continue;
-            }
-
-            snprintf(str, sizeof(str), "wait_for_device_reconnect(): Detected new device %s", dev_name);
-            log_log(str);
-
-            // Check the size of the device.
-            dev_size_str = udev_device_get_sysattr_value(device, "size");
-            if(!dev_size_str) {
-                // Nope, let's move on.
-                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Rejecting device %s: can't get size of device", dev_name);
-                log_log(str);
-
-                udev_device_unref(device);
-                continue;
-            }
-
-            dev_size = strtoull(dev_size_str, NULL, 10) * 512;
-            if(dev_size != device_stats.reported_size_bytes) {
-                // Device's reported size doesn't match 
-                snprintf(str, sizeof(str),
-                    "wait_for_device_reconnect(): Rejecting device %s: device size doesn't match (this device = %'lu bytes, device we're looking for = "
-                    "%'lu bytes)", dev_name, dev_size, device_stats.reported_size_bytes);
-                log_log(str);
-
-                udev_device_unref(device);
-                continue;
-            }
-
-            if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Rejecting device %s: open() returned an error: %s", dev_name, strerror(errno));
-                log_log(str);
-
-                udev_device_unref(device);
-                continue;
-            }
-
-            ret = compare_bod_mod_data(fd);
-            close(fd);
-
-            if(ret) {
-                if(ret == -1) {
-                    snprintf(str, sizeof(str),
-                        "wait_for_device_reconnect(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data",
-                        dev_name);
-                } else {
-                    snprintf(str, sizeof(str), "wait_for_device_reconnect(): Rejecting device %s: beginning-of-device and middle-of-device data doesn't match",
-                    dev_name);
-                }
-
-                log_log(str);
-                udev_device_unref(device);
-                continue;
-            }
-
-            // Ok, we have a match.  Get stats on the device.
-            if(stat(dev_name, &fs) == -1) {
-                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to stat() it: %s",
-                    dev_name, strerror(errno));
-                log_log(str);
-                log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
-
-                udev_device_unref(device);
-                continue;
-            }
-
-            // Re-open the device read/write.
-            if((fd = open(dev_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
-                // Well crap.
-                snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to re-open() it: %s",
-                    dev_name, strerror(errno));
-                log_log(str);
-                log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
-
-                udev_device_unref(device);
-                continue;
-            }
-
-            snprintf(str, sizeof(str), "wait_for_device_reconnect(): Got a match on device %s", dev_name);
-            log_log(str);
-
-            // Copy the device name over to program_options.device_name
-            free(program_options.device_name);
-            program_options.device_name = (char *) malloc(strlen(dev_name) + 1);
-            strcpy(program_options.device_name, dev_name);
-            device_stats.device_num = fs.st_rdev;
-
-            // Cleanup and exit
-            udev_device_unref(device);
-            udev_monitor_unref(monitor);
-            udev_unref(udev_handle);
-            free(buffer);
-            return fd;
-
-        }
-
-        if(program_options.no_curses) {
-            usleep(100000);
-        } else {
-            napms(100);
-        }
     }
 }
 
@@ -3692,101 +2177,12 @@ int parse_command_line_arguments(int argc, char **argv) {
     return 0;
 }
 
-/**
- * Determines whether the device described in device_stats.device_num is a device
- * that we know how to reset.
- *
- * @returns 1 if we know how to reset the device, or 0 if we don't.
- */
-int can_reset_device() {
-    struct udev *udev_handle;
-    struct udev_device *child_device, *parent_device;
-
-    udev_handle = udev_new();
-    if(!udev_handle) {
-        return 0;
-    }
-
-    child_device = udev_device_new_from_devnum(udev_handle, 'b', device_stats.device_num);
-    if(!child_device) {
-        udev_unref(udev_handle);
-        return 0;
-    }
-
-    // We only know how to reset USB devices -- so if it's not a USB device, we're gonna fail
-    parent_device = udev_device_get_parent_with_subsystem_devtype(child_device, "usb", "usb_device");
-    if(!parent_device) {
-      udev_device_unref(child_device);
-      udev_unref(udev_handle);
-      return 0;
-    }
-
-    udev_device_unref(child_device);
-    udev_unref(udev_handle);
-    return 1;
-}
-
-int reset_device(int device_fd) {
-    struct udev *udev_handle;
-    struct udev_device *child_device, *parent_device;
-    const char *device_name;
-    int fd;
-
-    udev_handle = udev_new();
-    if(!udev_handle) {
-        return -1;
-    }
-
-    child_device = udev_device_new_from_devnum(udev_handle, 'b', device_stats.device_num);
-    if(!child_device) {
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    parent_device = udev_device_get_parent_with_subsystem_devtype(child_device, "usb", "usb_device");
-    if(!parent_device) {
-        udev_device_unref(child_device);
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    device_name = udev_device_get_devnode(parent_device);
-    if(!device_name) {
-        udev_device_unref(child_device);
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    if((fd = open(device_name, O_WRONLY | O_NONBLOCK)) == -1) {
-        udev_device_unref(child_device);
-        udev_unref(udev_handle);
-        return -1;
-    }
-
-    close(device_fd);
-
-    if(ioctl(fd, USBDEVFS_RESET) == -1) {
-      close(fd);
-      return -1;
-    }
-
-    close(fd);
-
-    fd = find_device(0);
-    if(fd == -1) {
-      return -1;
-    }
-
-    if(fd <= 0) {
-        return wait_for_device_reconnect();
-    } else {
-        return fd;
-    }
-}
-
 off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
+    int iret;
+    char *new_device_name;
+    dev_t new_device_num;
     off_t ret;
     WINDOW *window;
 
@@ -3801,7 +2197,7 @@ off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int 
         // is disconnected and reconnected (or reset), the device name might change --
         // so only try to recover if we've completed at least one round.
         if(num_rounds_completed > 0) {
-            if(did_device_disconnect() || *fd == -1) {
+            if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
                 *device_was_disconnected = 1;
                 if(*fd != -1) {
                     close(*fd);
@@ -3818,12 +2214,18 @@ off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int 
                     NULL
                 }, 0);
 
-                *fd = wait_for_device_reconnect();
+                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
 
-                if(*fd == -1) {
+                if(iret == -1) {
                     log_log("retriable_lseek(): Failed to reconnect device!");
                 } else {
                     log_log("retriable_lseek(): Device reconnected.");
+                    if(program_options.device_name) {
+                        free(program_options.device_name);
+                    }
+
+                    program_options.device_name = new_device_name;
+                    device_stats.device_num = new_device_num;
                 }
 
                 erase_and_delete_window(window);
@@ -3834,7 +2236,7 @@ off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int 
                     ret = lseek(*fd, position, SEEK_SET);
                     op_retry_count++;
                 } else {
-                    if(can_reset_device()) {
+                    if(can_reset_device(device_stats.device_num)) {
                         log_log("retriable_lseek(): Device error.  Attempting to reset the device...");
                         window = message_window(stdscr, "Attempting to reset device", (char *[]) {
                             "The device has encountered an error.  We're attempting to reset the device to",
@@ -3877,9 +2279,12 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
     int op_retry_count;
     int reset_retry_count;
     int device_was_disconnected;
+    int iret;
     ssize_t ret;
     WINDOW *window;
     char str[256];
+    char *new_device_name;
+    dev_t new_device_num;
 
     op_retry_count = 0;
     reset_retry_count = 0;
@@ -3891,7 +2296,7 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
     }
 
     while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
-        if(did_device_disconnect() || *fd == -1) {
+        if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
             if(*fd != -1) {
                 close(*fd);
             }
@@ -3907,10 +2312,18 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
                 NULL
             }, 0);
 
-            *fd = wait_for_device_reconnect();
+            iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
 
-            if(*fd != -1) {
+            if(iret != -1) {
                 log_log("retriable_read(): Device reconnected.");
+
+                if(program_options.device_name) {
+                    free(program_options.device_name);
+                }
+
+                program_options.device_name = new_device_name;
+                device_stats.device_num = new_device_num;
+
                 if(retriable_lseek(fd, position, num_rounds_completed, &device_was_disconnected) == -1) {
                     log_log("retriable_read(): Failed to seek to previous position after re-opening device");
                     erase_and_delete_window(window);
@@ -3929,7 +2342,7 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
                 ret = read(*fd, buf, count);
                 op_retry_count++;
             } else {
-                if(can_reset_device()) {
+                if(can_reset_device(device_stats.device_num)) {
                     log_log("retriable_read(): Device error.  Attempting to reset the device...");
                     window = message_window(stdscr, "Attempting to reset device", (char *[]) {
                         "The device has encountered an error.  We're attempting to reset the device to",
@@ -3978,9 +2391,12 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
 ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t num_rounds_completed, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
+    int iret;
     ssize_t ret;
     WINDOW *window;
     char str[256];
+    char *new_device_name;
+    dev_t new_device_num;
 
     op_retry_count = 0;
     reset_retry_count = 0;
@@ -3999,7 +2415,7 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
         // is disconnected and reconnected (or reset), the device name might change --
         // so only try to recover if we've completed at least one round.
         if(num_rounds_completed > 0) {
-            if(did_device_disconnect() || *fd == -1) {
+            if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
                 if(*fd != -1) {
                     close(*fd);
                 }
@@ -4015,10 +2431,18 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
                     NULL
                 }, 0);
 
-                *fd = wait_for_device_reconnect();
+                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
 
-                if(*fd != -1) {
+                if(iret != -1) {
                     log_log("retriable_write(): Device reconnected.");
+
+                    if(program_options.device_name) {
+                        free(program_options.device_name);
+                    }
+
+                    program_options.device_name = new_device_name;
+                    device_stats.device_num = new_device_num;
+
                     if(retriable_lseek(fd, position, num_rounds_completed, device_was_disconnected) == -1) {
                         log_log("retriable_write(): Failed to seek to previous position after re-opening device");
                         erase_and_delete_window(window);
@@ -4039,7 +2463,7 @@ ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t
                     ret = write(*fd, buf, count);
                     op_retry_count++;
                 } else {
-                    if(can_reset_device()) {
+                    if(can_reset_device(device_stats.device_num)) {
                         log_log("retriable_write(): Device error.  Attempting to reset the device...");
                         window = message_window(stdscr, "Attempting to reset device", (char *[]) {
                             "The device has encountered an error.  We're attempting to reset the device to",
@@ -4120,13 +2544,21 @@ void valloc_error(int errnum) {
     }, 1);
 }
 
+void reset_sector_map() {
+    for(int j = 0; j < device_stats.num_sectors; j++) {
+        sector_display.sector_map[j] &= 0x01;
+    }
+
+    // dispatch_sector_map_info_param_event(EVENT_INFO_SECTOR_MAP_RESET, device_stats.num_sectors, device_stats.sector_size, 1, sector_display.sector_map);
+}
+
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
     size_t bytes_left_to_write, ret, cur_sector, middle_of_device;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
-    char *buf, *compare_buf, *zero_buf, *ff_buf;
+    char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
     struct timeval speed_start_time;
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
     size_t num_bad_sectors_this_round, num_good_sectors_this_round;
@@ -4135,9 +2567,11 @@ int main(int argc, char **argv) {
     int op_retry_count; // How many times have we tried the same operation without success?
     int reset_retry_count; // How many times have we tried to reset the device?
     int device_was_disconnected;
+    int iret;
     char str[192], tmp[16];
     struct timeval stats_cur_time;
     WINDOW *window;
+    dev_t new_device_num;
 
     // Set things up so that cleanup() works properly
     sector_display.sector_map = NULL;
@@ -4435,11 +2869,12 @@ int main(int argc, char **argv) {
             NULL
         }, 0);
 
-        fd = find_device(1);
+        iret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name,
+                           &new_device_num, &fd);
 
         erase_and_delete_window(window);
 
-        if(fd == -1) {
+        if(ret == -1) {
             log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
             message_window(stdscr, ERROR_TITLE, (char *[]) {
                 "An error occurred while trying to locate the device described in the state file.",
@@ -4449,7 +2884,7 @@ int main(int argc, char **argv) {
 
             cleanup();
             return -1;
-        } else if(fd == -2) {
+        } else if(ret > 1) {
             log_log("Multiple devices found that match the data in the state file.  Please specify which device you want to test on the command line.");
             message_window(stdscr, ERROR_TITLE, (char *[]) {
                 "There are multiple devices that match the data in the state file.  Please",
@@ -4459,43 +2894,53 @@ int main(int argc, char **argv) {
             
             cleanup();
             return -1;
-        } else if(fd == -3 || (fd == 0 && program_options.device_name)) {
-            log_log("The device specified on the command line does not match the device described in the state file.");
-            log_log("Please remove the device from the command line or specify a different device.");
-            message_window(stdscr, ERROR_TITLE, (char *[]) {
-                "The device you specified on the command line does not match the device described",
-                "in the state file.  If you run this program again without the device name, we'll",
-                "figure out which device to use automatically.  Otherwise, provide a different",
-                "device on the command line.",
-                NULL
-            }, 1);
-
-            cleanup();
-            return -1;
-        } else if(fd == 0) {
-            log_log("No devices could be found that match the data in the state file.  Attach one now...");
-            window = message_window(stdscr, "No devices found", (char *[]) {
-                "No devices could be found that match the data in the state file.  If you haven't",
-                "plugged the device in yet, go ahead and do so now.  Otherwisse, you can hit",
-                "Ctrl+C now to abort the program.",
-                NULL
-            }, 0);
-
-            fd = wait_for_device_reconnect();
-
-            erase_and_delete_window(window);
-
-            if(fd == -1) {
-                log_log("An error occurred while waiting for the device to be reconnected.");
+        } else if(ret == 0) {
+            if(program_options.device_name) {
+                log_log("The device specified on the command line does not match the device described in the state file.");
+                log_log("Please remove the device from the command line or specify a different device.");
                 message_window(stdscr, ERROR_TITLE, (char *[]) {
-                    "An error occurred while waiting for you to reconnect the device.  Sorry about",
-                    "that.",
+                    "The device you specified on the command line does not match the device described",
+                    "in the state file.  If you run this program again without the device name, we'll",
+                    "figure out which device to use automatically.  Otherwise, provide a different",
+                    "device on the command line.",
                     NULL
                 }, 1);
 
                 cleanup();
                 return -1;
+            } else {
+                log_log("No devices could be found that match the data in the state file.  Attach one now...");
+                window = message_window(stdscr, "No devices found", (char *[]) {
+                    "No devices could be found that match the data in the state file.  If you haven't",
+                    "plugged the device in yet, go ahead and do so now.  Otherwisse, you can hit",
+                    "Ctrl+C now to abort the program.",
+                    NULL
+                }, 0);
+
+                ret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &program_options.device_name,
+                                                &device_stats.device_num, &fd);
+
+                if(ret == -1) {
+                    erase_and_delete_window(window);
+                    log_log("An error occurred while waiting for the device to be reconnected.");
+                    message_window(stdscr, ERROR_TITLE, (char *[]) {
+                        "An error occurred while waiting for you to reconnect the device.",
+                        NULL
+                    }, 1);
+
+                    cleanup();
+                    return -1;
+                } else {
+                    erase_and_delete_window(window);
+                }
             }
+        } else {
+            if(program_options.device_name) {
+                free(program_options.device_name);
+            }
+
+            program_options.device_name = new_device_name;
+            device_stats.device_num = new_device_num;
         }
 
         if(fstat(fd, &fs)) {

@@ -3,6 +3,7 @@
 
 #define VERSION "0.3"
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
+#include <stdio.h>
 
 
 // Size of the beginning-of-device and middle-of-device buffers
@@ -280,5 +281,109 @@
 #define LOAD_STATE_FILE_DOES_NOT_EXIST 2
 #define LOAD_STATE_LOAD_ERROR 3
 
-#endif
+typedef enum {
+    FAKE_FLASH_UNKNOWN,
+    FAKE_FLASH_YES,
+    FAKE_FLASH_NO
+} FakeFlashEnum;
+
+// Global variables
+struct {
+    size_t num_sectors;
+    size_t num_bad_sectors;
+    size_t bytes_since_last_status_update;
+    size_t reported_size_bytes;
+    size_t detected_size_bytes;
+    int sector_size;
+    unsigned int physical_sector_size;
+    int preferred_block_size;
+    int block_size;
+    int max_request_size;
+    dev_t device_num;
+    FakeFlashEnum is_fake_flash;
+} device_stats;
+
+struct {
+    char *stats_file;
+    char *log_file;
+    char *device_name;
+    size_t stats_interval;
+    unsigned char probe_for_optimal_block_size;
+    char no_curses;      // What's the current setting of no-curses?
+    char orig_no_curses; // What was passed on the command line?
+    char dont_show_warning_message;
+    char *lock_file;
+    char *state_file;
+    size_t force_sectors;
+} program_options;
+
+struct {
+    FILE *log_file;
+    FILE *stats_file;
+    int lockfile_fd;
+} file_handles;
+
+struct {
+    size_t sectors_per_block;
+    char *sector_map;
+    size_t sectors_in_last_block;
+    size_t num_blocks;
+    size_t num_lines;
+    size_t blocks_per_line;
+} sector_display;
+
+struct {
+    struct timeval previous_update_time;
+    size_t previous_bytes_written;
+    size_t previous_bytes_read;
+    size_t previous_bad_sectors;
+} stress_test_stats;
+
+struct {
+    size_t bytes_read;
+    size_t bytes_written;
+    ssize_t first_failure_round;
+    ssize_t ten_percent_failure_round;
+    ssize_t twenty_five_percent_failure_round;
+} state_data;
+
+unsigned long initial_seed;
+unsigned long current_seed;
+struct random_data random_state;
+char random_number_state_buf[256];
+char speed_qualifications_shown;
+char ncurses_active;
+char *forced_device;
+ssize_t num_rounds;
+int is_writing;
+
+// To handle device disconnects/reconnects, we're going to create a couple of
+// buffers where we hold the most recent 1MB of data that we wrote to the
+// beginning of the device (BOD) and middle of the device (MOD).  When a device
+// is reconnected, we'll read back those two segments.  One segment needs to be
+// a 100% match; we can be fuzzy about how much of the other segment matches.
+// I'm taking this approach in case we were in the middle of writing to one of
+// these two segments when the device was disconnected and we're not sure how
+// much of the data was actually committed (e.g., actually made it out of the
+// device's write cache and into permanent storage).
+char bod_buffer[BOD_MOD_BUFFER_SIZE];
+char mod_buffer[BOD_MOD_BUFFER_SIZE];
+
+struct {
+    double sequential_write_speed;
+    double sequential_read_speed;
+    double random_write_iops;
+    double random_read_iops;
+} device_speeds;
+
+/**
+ * Log the given string to the log file, if the log file is open.  If curses
+ * mode is turned off, also log the given string to stdout.  The time is
+ * prepended to the message, and a newline is appended to the message.
+ * 
+ * @param msg       The null-terminated string to write to the log file.
+ */
+void log_log(char *msg);
+
+#endif // !defined(__MFST_H)
 
