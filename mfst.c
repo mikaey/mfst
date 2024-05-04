@@ -3315,7 +3315,7 @@ int main(int argc, char **argv) {
             if(save_state()) {
                 log_log("Error creating save state, disabling save stating");
                 message_window(stdscr, WARNING_TITLE, (char *[]) {
-                    "An error occurred while trying to save the program state.  Save stating has been"
+                    "An error occurred while trying to save the program state.  Save stating has been",
                     "disabled.",
                     NULL
                 }, 1);
