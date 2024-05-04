@@ -1327,22 +1327,17 @@ void multifree(int num_args, ...) {
 void init_random_number_generator(unsigned int seed) {
     memset(random_number_state_buf, 0, sizeof(random_number_state_buf));
     initstate_r(seed, random_number_state_buf, sizeof(random_number_state_buf), &random_state);
-    random_calls = 0;
 }
 
 /**
- * Obtains a random number from the random number generator.  This function
- * takes random()'s periodicity into account, and resets the RNG with a new
- * seed if that periodicity has been exceeded.
+ * Obtains a random number from the random number generator.  Since random()
+ * only generates 31 bits of random data, this function randomizes the uppermost
+ * bit of the result.
  * 
  * @returns The generated random number.
 */
 int32_t get_random_number() {
     int32_t result;
-    if(random_calls >= RANDOM_PERIOD) {
-        init_random_number_generator(++current_seed);
-    }
-
     random_r(&random_state, &result);
 
     // random() and random_r() generate random numbers between 0 and
@@ -1350,7 +1345,6 @@ int32_t get_random_number() {
     // the device if we just accept this value.  To spice things up a little,
     // we'll throw some extra randomness into the top bit.
     result |= ((current_seed & result & 0x00000001) | (~(current_seed & (result >> 1)) & 0x00000001)) << 31;
-    random_calls++;
     return result;
 }
 
@@ -4858,7 +4852,6 @@ int main(int argc, char **argv) {
         read_order = random_list();
 
         for(cur_slice = 0, restart_slice = 0; cur_slice < 16; cur_slice++, restart_slice = 0) {
-            random_calls = 0;
             srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
@@ -5028,7 +5021,6 @@ int main(int argc, char **argv) {
         }
 
         for(cur_slice = 0; cur_slice < 16; cur_slice++) {
-            random_calls = 0;
             srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
