@@ -2832,7 +2832,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    log_log("Program started.");
+    // dispatch_null_param_event(EVENT_PROGRAM_STARTED, 0);
+    log_log("Program version " VERSION " started.");
 
     if(state_file_status == LOAD_STATE_SUCCESS) {
         snprintf(str, sizeof(str), "Resuming from state file %s", program_options.state_file);
