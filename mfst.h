@@ -13,12 +13,14 @@
 #define RNG_PROFILE_SECS 5
 
 // So that I don't have to memorize the different color pairs
-#define BLACK_ON_WHITE 1
-#define BLACK_ON_BLUE  2
-#define BLACK_ON_GREEN 3
-#define BLACK_ON_RED   4
-#define GREEN_ON_BLACK 5
-#define RED_ON_BLACK   6
+#define BLACK_ON_WHITE   1
+#define BLACK_ON_BLUE    2
+#define BLACK_ON_GREEN   3
+#define BLACK_ON_RED     4
+#define GREEN_ON_BLACK   5
+#define RED_ON_BLACK     6
+#define BLACK_ON_MAGENTA 7
+#define BLACK_ON_YELLOW  8
 
 // How many times to retry a given operation before attempting a reset
 #define MAX_OP_RETRIES 5
@@ -91,29 +93,53 @@
 #define COLOR_KEY_WRITTEN_BLOCK_Y 3
 #define COLOR_KEY_WRITTEN_BLOCK_X (COLS - 37)
 
+// The coordinates of the slash character between the blue and magenta block characters
+#define COLOR_KEY_WRITTEN_SLASH_Y 3
+#define COLOR_KEY_WRITTEN_SLASH_X (COLS - 36)
+
+// The coordinates of the magenta block character in the color key
+#define COLOR_KEY_WRITTEN_BAD_BLOCK_Y 3
+#define COLOR_KEY_WRITTEN_BAD_BLOCK_X (COLS - 35)
+
 // The coordinates of the green block character in the color key
 #define COLOR_KEY_VERIFIED_BLOCK_Y 4
 #define COLOR_KEY_VERIFIED_BLOCK_X (COLS - 37)
+
+// The coordinates of the slash character between the green and yellow block characters
+#define COLOR_KEY_VERIFIED_SLASH_Y 4
+#define COLOR_KEY_VERIFIED_SLASH_X (COLS - 36)
+
+// The coordinates of the yellow block character in the color key
+#define COLOR_KEY_VERIFIED_BAD_BLOCK_Y 4
+#define COLOR_KEY_VERIFIED_BAD_BLOCK_X (COLS - 35)
 
 // The coordinates of the red block character in the color key
 #define COLOR_KEY_FAILED_BLOCK_Y 5
 #define COLOR_KEY_FAILED_BLOCK_X (COLS - 37)
 
+// The coordinates of the slash character between the red block character and the black/yellow diamond character
+#define COLOR_KEY_FAILED_SLASH_Y 5
+#define COLOR_KEY_FAILED_SLASH_X (COLS - 36)
+
+// The coordinates of the black diamond on yellow background character in the color key
+#define COLOR_KEY_FAILED_THIS_ROUND_BLOCK_Y 5
+#define COLOR_KEY_FAILED_THIS_ROUND_BLOCK_X (COLS - 35)
+
 // The coordinates of the "=" next to the bytes per block display
 #define BLOCK_SIZE_LABEL_Y 2
-#define BLOCK_SIZE_LABEL_X (COLS - 35)
+#define BLOCK_SIZE_LABEL_X (COLS - 33)
 
 // The coordinates of the "= Written" label
 #define WRITTEN_BLOCK_LABEL_Y 3
-#define WRITTEN_BLOCK_LABEL_X (COLS - 35)
+#define WRITTEN_BLOCK_LABEL_X (COLS - 33)
 
 // The coordinates of the "= Verified" label
 #define VERIFIED_BLOCK_LABEL_Y 4
-#define VERIFIED_BLOCK_LABEL_X (COLS - 35)
+#define VERIFIED_BLOCK_LABEL_X (COLS - 33)
 
 // The coordinates of the "= Failed" label
 #define FAILED_BLOCK_LABEL_Y 5
-#define FAILED_BLOCK_LABEL_X (COLS - 35)
+#define FAILED_BLOCK_LABEL_X (COLS - 33)
 
 // The coordinates of the "Speed Class Qualifications:" label
 #define SPEED_CLASS_QUALIFICATIONS_LABEL_Y 7
@@ -193,7 +219,7 @@
 
 // The coordinates of where to display the bytes per block on screen.
 #define BLOCK_SIZE_DISPLAY_Y 2
-#define BLOCK_SIZE_DISPLAY_X (COLS - 33)
+#define BLOCK_SIZE_DISPLAY_X (COLS - 31)
 
 // The coordinates of where to print the "Is fake flash" result
 #define IS_FAKE_FLASH_DISPLAY_Y (LINES - 3)

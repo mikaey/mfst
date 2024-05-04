@@ -178,11 +178,14 @@ void erase_and_delete_window(WINDOW *window) {
  * Draw the block containing the given sector in the given color.  The display
  * is not refreshed after the block is drawn.
  * 
- * @param sector_num  The sector number of the sector to draw.
- * @param color       The ID of the color pair specifying the colors to draw
- *                    the block in.
-*/
-void draw_sector(size_t sector_num, int color) {
+ * @param sector_num    The sector number of the sector to draw.
+ * @param color         The ID of the color pair specifying the colors to draw
+ *                      the block in.
+ * @param with_diamond  Non-zero to indicate that a diamond should be drawn in
+ *                      the block, or 0 to indicate that it should be an empty
+ *                      block.
+ */
+void draw_sector(size_t sector_num, int color, int with_diamond) {
     int block_num, row, col;
 
     if(program_options.no_curses) {
@@ -193,7 +196,13 @@ void draw_sector(size_t sector_num, int color) {
     row = block_num / sector_display.blocks_per_line;
     col = block_num - (row * sector_display.blocks_per_line);
     attron(COLOR_PAIR(color));
-    mvaddstr(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, " ");
+
+    if(with_diamond) {
+        mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ACS_DIAMOND);
+    } else {
+        mvaddstr(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, " ");
+    }
+
     attroff(COLOR_PAIR(color));
 }
 
@@ -211,6 +220,7 @@ void draw_sectors(size_t start_sector, size_t end_sector) {
     size_t min, max;
     char cur_block_has_bad_sectors;
     int color;
+    int this_round;
 
     min = start_sector / sector_display.sectors_per_block;
     max = (end_sector / sector_display.sectors_per_block) + ((end_sector % sector_display.sectors_per_block) ? 1 : 0);
@@ -226,14 +236,23 @@ void draw_sectors(size_t start_sector, size_t end_sector) {
             num_sectors_in_cur_block = sector_display.sectors_per_block;
         }
 
+        this_round = 0;
+
         for(j = i * sector_display.sectors_per_block; j < ((i * sector_display.sectors_per_block) + num_sectors_in_cur_block); j++) {
             cur_block_has_bad_sectors |= sector_display.sector_map[j] & 0x01;
             num_written_sectors += (sector_display.sector_map[j] & 0x02) >> 1;
             num_read_sectors += (sector_display.sector_map[j] & 0x04) >> 2;
+            this_round |= (sector_display.sector_map[j] & 0x08);
         }
 
         if(cur_block_has_bad_sectors) {
-            color = BLACK_ON_RED;
+            if(num_read_sectors == num_sectors_in_cur_block) {
+                color = BLACK_ON_YELLOW;
+            } else if(num_written_sectors == num_sectors_in_cur_block) {
+                color = BLACK_ON_MAGENTA;
+            } else {
+                color = BLACK_ON_RED;
+            }
         } else if(num_read_sectors == num_sectors_in_cur_block) {
             color = BLACK_ON_GREEN;
         } else if(num_written_sectors == num_sectors_in_cur_block) {
@@ -242,7 +261,7 @@ void draw_sectors(size_t start_sector, size_t end_sector) {
             color = BLACK_ON_WHITE;
         }
 
-        draw_sector(i * sector_display.sectors_per_block, color);
+        draw_sector(i * sector_display.sectors_per_block, color, this_round);
     }
 }
 
@@ -300,9 +319,9 @@ void mark_sector_bad(size_t sector_num) {
         device_stats.num_bad_sectors++;
     }
 
-    sector_display.sector_map[sector_num] |= 0x01;
+    sector_display.sector_map[sector_num] |= 0x09;
 
-    draw_sector(sector_num, BLACK_ON_RED);
+    draw_sector(sector_num, BLACK_ON_YELLOW, 1);
 }
 
 /**
@@ -616,18 +635,36 @@ void redraw_screen() {
         mvaddstr(COLOR_KEY_WRITTEN_BLOCK_Y, COLOR_KEY_WRITTEN_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_BLUE));
 
+        mvaddstr(COLOR_KEY_WRITTEN_SLASH_Y, COLOR_KEY_WRITTEN_SLASH_X, "/");
+
+        attron(COLOR_PAIR(BLACK_ON_MAGENTA));
+        mvaddstr(COLOR_KEY_WRITTEN_BAD_BLOCK_Y, COLOR_KEY_WRITTEN_BAD_BLOCK_X, " ");
+        attroff(COLOR_PAIR(BLACK_ON_MAGENTA));
+
         attron(COLOR_PAIR(BLACK_ON_GREEN));
         mvaddstr(COLOR_KEY_VERIFIED_BLOCK_Y, COLOR_KEY_VERIFIED_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_GREEN));
+
+        mvaddstr(COLOR_KEY_VERIFIED_SLASH_Y, COLOR_KEY_VERIFIED_SLASH_X, "/");
+
+        attron(COLOR_PAIR(BLACK_ON_YELLOW));
+        mvaddstr(COLOR_KEY_VERIFIED_BAD_BLOCK_Y, COLOR_KEY_VERIFIED_BAD_BLOCK_X, " ");
+        attroff(COLOR_PAIR(BLACK_ON_YELLOW));
 
         attron(COLOR_PAIR(BLACK_ON_RED));
         mvaddstr(COLOR_KEY_FAILED_BLOCK_Y, COLOR_KEY_FAILED_BLOCK_X, " ");
         attroff(COLOR_PAIR(BLACK_ON_RED));
 
+        mvaddstr(COLOR_KEY_FAILED_SLASH_Y, COLOR_KEY_FAILED_SLASH_X, "/");
+
+        attron(COLOR_PAIR(BLACK_ON_YELLOW));
+        mvaddch(COLOR_KEY_FAILED_THIS_ROUND_BLOCK_Y, COLOR_KEY_FAILED_THIS_ROUND_BLOCK_X, ACS_DIAMOND);
+        attroff(COLOR_PAIR(BLACK_ON_YELLOW));
+
         mvaddstr(BLOCK_SIZE_LABEL_Y    , BLOCK_SIZE_LABEL_X    , "="         );
-        mvaddstr(WRITTEN_BLOCK_LABEL_Y , WRITTEN_BLOCK_LABEL_X , "= Written" );
-        mvaddstr(VERIFIED_BLOCK_LABEL_Y, VERIFIED_BLOCK_LABEL_X, "= Verified");
-        mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed"  );
+        mvaddstr(WRITTEN_BLOCK_LABEL_Y , WRITTEN_BLOCK_LABEL_X , "= Written/failed previously" );
+        mvaddstr(VERIFIED_BLOCK_LABEL_Y, VERIFIED_BLOCK_LABEL_X, "= Verified/failed previously");
+        mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed/this round"  );
 
         if(num_rounds != -1) {
             j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
@@ -1998,6 +2035,8 @@ int screen_setup() {
     init_pair(BLACK_ON_RED, COLOR_BLACK, COLOR_RED);
     init_pair(GREEN_ON_BLACK, COLOR_GREEN, COLOR_BLACK);
     init_pair(RED_ON_BLACK, COLOR_RED, COLOR_BLACK);
+    init_pair(BLACK_ON_MAGENTA, COLOR_BLACK, COLOR_MAGENTA);
+    init_pair(BLACK_ON_YELLOW, COLOR_BLACK, COLOR_YELLOW);
 
     ncurses_active = 1;
     return 0;
