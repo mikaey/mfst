@@ -3240,8 +3240,18 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    // This buffer is going to be filled with all zero's -- just to make it
-    // easier to determine if a sector we read back was all zero's
+    compare_buf = (char *) valloc(device_stats.block_size);
+    if(!compare_buf) {
+        valloc_error(errno);
+        cleanup();
+        return -1;
+    }
+
+    // Flash media has a tendency to return either all 0x00's or all 0xff's when
+    // it's not able to read a particular sector (for example, when the sector
+    // doesn't exist).  These two buffers are going to just hold all 0x00's and
+    // all 0xff's to make it easier to do memcmp's against them when a sector
+    // doesn't match the expected values.
     zero_buf = (char *) malloc(device_stats.sector_size);
     if(!zero_buf) {
         malloc_error(errno);
@@ -3259,13 +3269,6 @@ int main(int argc, char **argv) {
     }
 
     memset(ff_buf, 0xff, device_stats.sector_size);
-
-    compare_buf = (char *) valloc(device_stats.block_size);
-    if(!compare_buf) {
-        valloc_error(errno);
-        cleanup();
-        return -1;
-    }
 
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         if(!(sector_display.sector_map = (char *) malloc(device_stats.num_sectors))) {
