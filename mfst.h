@@ -380,7 +380,7 @@ struct {
  * Log the given string to the log file, if the log file is open.  If curses
  * mode is turned off, also log the given string to stdout.  The time is
  * prepended to the message, and a newline is appended to the message.
- * 
+ *
  * @param msg       The null-terminated string to write to the log file.
  */
 void log_log(char *msg);

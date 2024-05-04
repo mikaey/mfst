@@ -74,7 +74,7 @@ int unlock_lockfile() {
  * Log the given string to the log file, if the log file is open.  If curses
  * mode is turned off, also log the given string to stdout.  The time is
  * prepended to the message, and a newline is appended to the message.
- * 
+ *
  * @param msg       The null-terminated string to write to the log file.
  */
 void log_log(char *msg) {
@@ -96,7 +96,7 @@ void log_log(char *msg) {
 /**
  * Log the given stats to the stats file.  The stats file is a CSV file with
  * the following columns:
- * 
+ *
  * * Date/time at which the stats were logged
  * * The number of read/write/verify rounds completed against the device so far
  * * Bytes written to the device since the timestamp indicated in the previous
@@ -162,7 +162,7 @@ void stats_log(size_t rounds, size_t bad_sectors) {
 
 /**
  * Erases the given window, refreshes it, then deletes it.
- * 
+ *
  * @param window  The window to erase and delete.
  */
 void erase_and_delete_window(WINDOW *window) {
@@ -219,6 +219,7 @@ void draw_sectors(size_t start_sector, size_t end_sector) {
         cur_block_has_bad_sectors = 0;
         num_written_sectors = 0;
         num_read_sectors = 0;
+
         if(i == (sector_display.num_blocks - 1)) {
             num_sectors_in_cur_block = sector_display.sectors_in_last_block;
         } else {
@@ -737,18 +738,18 @@ int handle_key_inputs(WINDOW *curwin) {
 /**
  * Create a window and show a message in it.  Afterwards, the parent window
  * is touched and the window is refreshed.
- * 
+ *
  * The strings in `msg` are displayed in the new window, one per line.  No
  * wrapping is applied.  If any part of the window would overflow off the edge
  * of the screen, the window is not created and NULL is returned.
- * 
+ *
  * If `wait` is set to a non-zero value, two lines are added to the bottom of
  * the window: a blank line, and a line that shows "Press Enter to continue",
  * centered in the window.  The length of this string is taken into account
  * when calculating the width of the window.  The function will then block and
  * wait for the user to press Enter.  Afterwards, the function will erase and
  * destroy the window, and the function will return NULL.
- * 
+ *
  * @param parent  The window which will serve as the parent for the new window.
  * @param title   The title that will be displayed at the top of the window.
  *                If this is set to NULL, no title is displayed.
@@ -758,7 +759,7 @@ int handle_key_inputs(WINDOW *curwin) {
  * @param wait    Non-zero to indicate that the function should block and wait
  *                for the user to press Enter, or zero to indicate that the
  *                function should return immediately.
- * 
+ *
  * @returns A pointer to the new window, or NULL if (a) a member of `msg` is
  *          too long and would cause the window to overflow off the edge of the
  *          display, (b) wait is set to a non-zero value, or (c) curses mode is
@@ -3517,10 +3518,10 @@ int main(int argc, char **argv) {
                             bytes_left_to_write -= device_stats.sector_size;
 
                             if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), num_rounds, &device_was_disconnected)) == -1) {
-                              // Give up if we can't seek
-                              print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
-                              cleanup();
-                              return 0;
+                                // Give up if we can't seek
+                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                                cleanup();
+                                return 0;
                             }
 
                             continue;
@@ -3591,7 +3592,7 @@ int main(int argc, char **argv) {
 
                         mark_sector_bad(cur_sector + (j / device_stats.sector_size));
                     } else {
-                      if(is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
+                        if(is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             num_good_sectors_this_round++;
                         }
                     }
