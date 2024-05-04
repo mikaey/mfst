@@ -2772,6 +2772,8 @@ int main(int argc, char **argv) {
             sleep(15);
         }
 
+        erase_and_delete_window(window);
+
         state_file_status = LOAD_STATE_FILE_DOES_NOT_EXIST;
     }
 
