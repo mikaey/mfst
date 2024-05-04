@@ -2917,7 +2917,7 @@ int main(int argc, char **argv) {
 
         erase_and_delete_window(window);
 
-        if(ret == -1) {
+        if(iret == -1) {
             log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
             message_window(stdscr, ERROR_TITLE, (char *[]) {
                 "An error occurred while trying to locate the device described in the state file.",
@@ -2927,7 +2927,7 @@ int main(int argc, char **argv) {
 
             cleanup();
             return -1;
-        } else if(ret > 1) {
+        } else if(iret > 1) {
             log_log("Multiple devices found that match the data in the state file.  Please specify which device you want to test on the command line.");
             message_window(stdscr, ERROR_TITLE, (char *[]) {
                 "There are multiple devices that match the data in the state file.  Please",
@@ -2937,7 +2937,7 @@ int main(int argc, char **argv) {
             
             cleanup();
             return -1;
-        } else if(ret == 0) {
+        } else if(iret == 0) {
             if(program_options.device_name) {
                 log_log("The device specified on the command line does not match the device described in the state file.");
                 log_log("Please remove the device from the command line or specify a different device.");
@@ -2960,10 +2960,10 @@ int main(int argc, char **argv) {
                     NULL
                 }, 0);
 
-                ret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &program_options.device_name,
-                                                &device_stats.device_num, &fd);
+                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &program_options.device_name,
+                                                 &device_stats.device_num, &fd);
 
-                if(ret == -1) {
+                if(iret == -1) {
                     erase_and_delete_window(window);
                     log_log("An error occurred while waiting for the device to be reconnected.");
                     message_window(stdscr, ERROR_TITLE, (char *[]) {
