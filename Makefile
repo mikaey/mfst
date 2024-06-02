@@ -1,5 +1,5 @@
-mfst: mfst.o base64.o state.o device.o
-	gcc -g -o mfst mfst.o state.o base64.o device.o -lncurses -ludev -ljson-c
+mfst: mfst.o base64.o state.o device.o util.o
+	gcc -g -o mfst mfst.o state.o base64.o util.o device.o -lncurses -ludev -ljson-c
 
 mfst.o: mfst.c mfst.h
 	gcc -c -g -o mfst.o mfst.c
@@ -12,3 +12,6 @@ state.o: state.c state.h mfst.h
 
 device.o: device.c device.h
 	gcc -c -g -o device.o device.c
+
+util.o: util.c util.h
+	gcc -c -g -o util.o util.c
