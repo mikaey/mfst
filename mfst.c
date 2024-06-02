@@ -12,9 +12,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include <strings.h>
 #include <assert.h>
-#include <stdarg.h>
 #include <locale.h>
 #include <curses.h>
 #include <unistd.h>
@@ -22,23 +20,12 @@
 #include "mfst.h"
 #include "state.h"
 #include "device.h"
+#include "util.h"
 
 // Since we use these strings so frequently, these are just here to save space
 const char *WARNING_TITLE = "WARNING";
 const char *ERROR_TITLE = "ERROR";
 
-/**
- * Calculates the difference between two given time values.
- * 
- * @param start_time  The beginning time value.
- * @param end_time    The ending time value.  This value should be greater
- *                    than `start_time`.
- * 
- * @returns The number of microseconds between the two time values.
- */
-time_t timediff(struct timeval start_time, struct timeval end_time) {
-    return ((end_time.tv_sec - start_time.tv_sec) * 1000000) + end_time.tv_usec - start_time.tv_usec;
-}
 
 /**
  * Test to see if the lockfile is locked.
@@ -371,22 +358,6 @@ void redraw_sector_map() {
 }
 
 /**
- * Frees multiple pointers.
- * 
- * @param num_args  The number of pointers to be freed.
- * @param ...       Pointers to be freed.
-*/
-void multifree(int num_args, ...) {
-    int n;
-    va_list list;
-
-    va_start(list, num_args);
-    for(n = 0; n < num_args; n++) {
-        free(va_arg(list, void *));
-    }
-}
-
-/**
  * Resets the random number generator and gives it the given seed.
  * 
  * @param seed  The seed to provide to the random number generator.
@@ -429,44 +400,6 @@ void fill_buffer(char *buffer, size_t size) {
     size_t i;
     for(i = 0; i < (size / 4); i++) {
         int_buffer[i] = get_random_number();
-    }
-}
-
-/**
- * Formats `rate` as a string describing a byte rate (e.g., "50 b/s",
- * "1.44 MB/s", etc.) and places it in the buffer pointed to by `buf`.  `buf`
- * should be big enough to hold the resulting string (which should be 13 bytes
- * or less, including the null terminator, in situations where `rate` is less
- * than 10 * 1024^5).  The function will write `buf_size` bytes, at most, to
- * `buf`.  The function will return a pointer to `buf` so that it can be easily
- * used, say, as an argument to a `printf()` call.
- * 
- * @param rate      The rate to be described.
- * @param buf       The buffer which will hold the resulting string.
- * @param buf_size  The maximum number of bytes that should be written to
- *                  `buf`.
- * 
- * @returns A pointer to `buf`.
-*/
-char *format_rate(double rate, char *buf, size_t buf_size) {
-    if(rate < 1024) {
-        snprintf(buf, buf_size, "%d b/s", (int) rate);
-        return buf;
-    } else if(rate < 1048576) {
-        snprintf(buf, buf_size, "%0.2f KB/s", rate / 1024);
-        return buf;
-    } else if(rate < 1073741824) {
-        snprintf(buf, buf_size, "%0.2f MB/s", rate / 1048576);
-        return buf;
-    } else if(rate < 1099511627776) {
-        snprintf(buf, buf_size, "%0.2f GB/s", rate / 1073741824);
-        return buf;
-    } else if(rate < 1125899906842624) {
-        snprintf(buf, buf_size, "%0.2f TB/s", rate / 1099511627776);
-        return buf;
-    } else {
-        snprintf(buf, buf_size, "%0.2f PB/s", rate / 1125899906842624);
-        return buf;
     }
 }
 
