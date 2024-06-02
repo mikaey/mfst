@@ -2600,6 +2600,7 @@ int main(int argc, char **argv) {
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
     struct timeval speed_start_time;
+    struct timeval rng_init_time;
     size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
     size_t num_bad_sectors_this_round, num_good_sectors_this_round;
     size_t cur_slice, i, j;
@@ -3228,7 +3229,8 @@ int main(int argc, char **argv) {
     //    - Compare what was generated to what we read back, on a
     //      sector-by-sector basis.  If they match, then the sector is good.
     //  - Repeat until at least 50% of the sectors read result in mismatches.
-    current_seed = initial_seed = time(NULL);
+    gettimeofday(&rng_init_time, NULL);
+    current_seed = initial_seed = rng_init_time.tv_sec + rng_init_time.tv_usec;
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         state_data.first_failure_round = state_data.ten_percent_failure_round = state_data.twenty_five_percent_failure_round = -1;
     }
