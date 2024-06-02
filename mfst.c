@@ -26,6 +26,36 @@
 const char *WARNING_TITLE = "WARNING";
 const char *ERROR_TITLE = "ERROR";
 
+struct {
+    FILE *log_file;
+    FILE *stats_file;
+    int lockfile_fd;
+} file_handles;
+
+struct {
+    struct timeval previous_update_time;
+    size_t previous_bytes_written;
+    size_t previous_bytes_read;
+    size_t previous_bad_sectors;
+} stress_test_stats;
+
+unsigned long initial_seed;
+unsigned long current_seed;
+struct random_data random_state;
+char random_number_state_buf[256];
+char speed_qualifications_shown;
+char ncurses_active;
+char *forced_device;
+int is_writing;
+
+state_data_type state_data;
+sector_display_type sector_display;
+device_speeds_type device_speeds;
+device_stats_type device_stats;
+program_options_type program_options;
+char bod_buffer[BOD_MOD_BUFFER_SIZE];
+char mod_buffer[BOD_MOD_BUFFER_SIZE];
+ssize_t num_rounds;
 
 /**
  * Test to see if the lockfile is locked.
