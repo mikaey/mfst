@@ -562,7 +562,7 @@ int find_device(char   * preferred_dev_name,
 
     free(matched_devices);
 
-    return 0;
+    return 1;
 }
 
 int wait_for_device_reconnect(size_t   expected_device_size,
