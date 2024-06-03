@@ -13,5 +13,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libjson-c4 libudev-dev libncurses-dev
+        version: 1.0
     - name: make
       run: make
