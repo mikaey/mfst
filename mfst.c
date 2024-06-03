@@ -322,6 +322,14 @@ void mark_sectors_read(size_t start_sector, size_t end_sector) {;
 }
 
 /**
+ * Draw the "% sectors bad" display.
+ */
+void draw_percentage() {
+    float percent_bad = (((float) device_stats.num_bad_sectors) / ((float) device_stats.num_sectors)) * 100.0;
+    mvprintw(PERCENT_SECTORS_FAILED_DISPLAY_Y, PERCENT_SECTORS_FAILED_DISPLAY_X, "%5.2f%%", percent_bad);
+}
+
+/**
  * Mark the given sector as "bad" in the sector map.  The block containing the
  * given sector is redrawn on the display.  The display is not refreshed after
  * the blocks are drawn.
@@ -336,6 +344,7 @@ void mark_sector_bad(size_t sector_num) {
     sector_display.sector_map[sector_num] |= 0x09;
 
     draw_sector(sector_num, BLACK_ON_YELLOW, 1);
+    draw_percentage();
 }
 
 /**
@@ -580,6 +589,7 @@ void redraw_screen() {
         mvaddstr(RANDOM_READ_SPEED_LABEL_Y     , RANDOM_READ_SPEED_LABEL_X     , "Random read     :");
         mvaddstr(RANDOM_WRITE_SPEED_LABEL_Y    , RANDOM_WRITE_SPEED_LABEL_X    , "Random write    :");
         mvaddstr(DEVICE_NAME_LABEL_Y           , DEVICE_NAME_LABEL_X           , " Device: "        );
+        mvaddstr(PERCENT_SECTORS_FAILED_LABEL_Y, PERCENT_SECTORS_FAILED_LABEL_X, "% sectors failed:");
         attroff(A_BOLD);
 
         // Draw the device name
@@ -688,6 +698,7 @@ void redraw_screen() {
 
         print_class_marking_qualifications();
         redraw_sector_map();
+        draw_percentage();
         refresh();
     }
 }
@@ -3273,6 +3284,8 @@ int main(int argc, char **argv) {
     stats_cur_time = stress_test_stats.previous_update_time;
 
     for(num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
+        draw_percentage(); // Just in case it hasn't been drawn recently
+
         if(num_rounds > 0) {
             if(save_state()) {
                 log_log("Error creating save state, disabling save stating");

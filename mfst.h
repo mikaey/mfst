@@ -69,6 +69,10 @@
 #define DEVICE_SPEEDS_LABEL_Y (LINES - 6)
 #define DEVICE_SPEEDS_LABEL_X 50
 
+// The coordinates of the "% Sectors Failed:" label
+#define PERCENT_SECTORS_FAILED_LABEL_Y (LINES - 2)
+#define PERCENT_SECTORS_FAILED_LABEL_X 2
+
 // The coordinates of the "Sequential read:" label
 #define SEQUENTIAL_READ_SPEED_LABEL_Y (LINES - 5)
 #define SEQUENTIAL_READ_SPEED_LABEL_X 52
@@ -224,6 +228,10 @@
 // The coordinates of where to print the "Is fake flash" result
 #define IS_FAKE_FLASH_DISPLAY_Y (LINES - 3)
 #define IS_FAKE_FLASH_DISPLAY_X 19
+
+// The coordinates of where to print the "% sectors failed" result
+#define PERCENT_SECTORS_FAILED_DISPLAY_Y (LINES - 2)
+#define PERCENT_SECTORS_FAILED_DISPLAY_X 20
 
 // The coordinates of the reported device size
 #define REPORTED_DEVICE_SIZE_DISPLAY_Y (LINES - 5)
