@@ -319,14 +319,14 @@ typedef struct _program_options_type {
     char *stats_file;
     char *log_file;
     char *device_name;
-    size_t stats_interval;
+    uint64_t stats_interval;
     unsigned char probe_for_optimal_block_size;
     char no_curses;      // What's the current setting of no-curses?
     char orig_no_curses; // What was passed on the command line?
     char dont_show_warning_message;
     char *lock_file;
     char *state_file;
-    size_t force_sectors;
+    uint64_t force_sectors;
 } program_options_type;
 
 extern program_options_type program_options;
@@ -339,11 +339,11 @@ typedef enum {
 
 // Global variables
 typedef struct _device_stats_type {
-    size_t num_sectors;
-    size_t num_bad_sectors;
-    size_t bytes_since_last_status_update;
-    size_t reported_size_bytes;
-    size_t detected_size_bytes;
+    uint64_t num_sectors;
+    uint64_t num_bad_sectors;
+    uint64_t bytes_since_last_status_update;
+    uint64_t reported_size_bytes;
+    uint64_t detected_size_bytes;
     int sector_size;
     unsigned int physical_sector_size;
     int preferred_block_size;
@@ -365,12 +365,12 @@ typedef struct _device_speeds_type {
 extern device_speeds_type device_speeds;
 
 typedef struct _sector_display_type {
-    size_t sectors_per_block;
+    uint64_t sectors_per_block;
     char *sector_map;
-    size_t sectors_in_last_block;
-    size_t num_blocks;
-    size_t num_lines;
-    size_t blocks_per_line;
+    uint64_t sectors_in_last_block;
+    uint64_t num_blocks;
+    uint64_t num_lines;
+    uint64_t blocks_per_line;
 } sector_display_type;
 
 extern sector_display_type sector_display;
@@ -387,7 +387,7 @@ extern sector_display_type sector_display;
 extern char bod_buffer[BOD_MOD_BUFFER_SIZE];
 extern char mod_buffer[BOD_MOD_BUFFER_SIZE];
 
-extern ssize_t num_rounds;
+extern int64_t num_rounds;
 
 /**
  * Log the given string to the log file, if the log file is open.  If curses
@@ -398,11 +398,11 @@ extern ssize_t num_rounds;
  */
 void log_log(char *msg);
 typedef struct _state_data_type {
-    size_t bytes_read;
-    size_t bytes_written;
-    ssize_t first_failure_round;
-    ssize_t ten_percent_failure_round;
-    ssize_t twenty_five_percent_failure_round;
+    uint64_t bytes_read;
+    uint64_t bytes_written;
+    int64_t first_failure_round;
+    int64_t ten_percent_failure_round;
+    int64_t twenty_five_percent_failure_round;
 } state_data_type;
 
 extern state_data_type state_data;

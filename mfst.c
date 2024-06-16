@@ -31,9 +31,9 @@ struct {
 
 struct {
     struct timeval previous_update_time;
-    size_t previous_bytes_written;
-    size_t previous_bytes_read;
-    size_t previous_bad_sectors;
+    uint64_t previous_bytes_written;
+    uint64_t previous_bytes_read;
+    uint64_t previous_bad_sectors;
 } stress_test_stats;
 
 unsigned long initial_seed;
@@ -52,7 +52,7 @@ device_stats_type device_stats;
 program_options_type program_options;
 char bod_buffer[BOD_MOD_BUFFER_SIZE];
 char mod_buffer[BOD_MOD_BUFFER_SIZE];
-ssize_t num_rounds;
+int64_t num_rounds;
 
 /**
  * Test to see if the lockfile is locked.
@@ -139,7 +139,7 @@ void log_log(char *msg) {
  * @param bad_sectors    The total number of sectors that have failed
  *                       verification so far.
  */
-void stats_log(size_t rounds, size_t bad_sectors) {
+void stats_log(uint64_t rounds, uint64_t bad_sectors) {
     double write_rate, read_rate, bad_sector_rate;
     time_t now = time(NULL);
     char *ctime_str;
@@ -199,7 +199,7 @@ void erase_and_delete_window(WINDOW *window) {
  *                      the block, or 0 to indicate that it should be an empty
  *                      block.
  */
-void draw_sector(size_t sector_num, int color, int with_diamond) {
+void draw_sector(uint64_t sector_num, int color, int with_diamond) {
     int block_num, row, col;
 
     if(program_options.no_curses) {
@@ -229,9 +229,9 @@ void draw_sector(size_t sector_num, int color, int with_diamond) {
  *                      all sectors within the range [start_sector, end_sector)
  *                      are redrawn.)
  */
-void draw_sectors(size_t start_sector, size_t end_sector) {
-    size_t i, j, num_sectors_in_cur_block, num_written_sectors, num_read_sectors;
-    size_t min, max;
+void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
+    uint64_t i, j, num_sectors_in_cur_block, num_written_sectors, num_read_sectors;
+    uint64_t min, max;
     char cur_block_has_bad_sectors;
     int color;
     int this_round;
@@ -290,8 +290,8 @@ void draw_sectors(size_t start_sector, size_t end_sector) {
  *                      written.  (Ergo, all sectors within the range
  *                      [start_sector, end_sector) are marked as written.)
  */
-void mark_sectors_written(size_t start_sector, size_t end_sector) {
-    size_t i;
+void mark_sectors_written(uint64_t start_sector, uint64_t end_sector) {
+    uint64_t i;
 
     for(i = start_sector; i < end_sector && i < device_stats.num_sectors; i++) {
         sector_display.sector_map[i] |= 0x02;
@@ -311,8 +311,8 @@ void mark_sectors_written(size_t start_sector, size_t end_sector) {
  *                      read.  (Ergo, all sectors within the range
  *                      [start_sector, end_sector) are marked as read.)
  */
-void mark_sectors_read(size_t start_sector, size_t end_sector) {;
-    size_t i;
+void mark_sectors_read(uint64_t start_sector, uint64_t end_sector) {;
+    uint64_t i;
 
     for(i = start_sector; i < end_sector && i < device_stats.num_sectors; i++) {
         sector_display.sector_map[i] |= 0x04;
@@ -336,7 +336,7 @@ void draw_percentage() {
  * 
  * @param sector_num  The sector number of the sector to be marked as bad.
  */
-void mark_sector_bad(size_t sector_num) {
+void mark_sector_bad(uint64_t sector_num) {
     if(!(sector_display.sector_map[sector_num] & 0x01)) {
         device_stats.num_bad_sectors++;
     }
@@ -355,7 +355,7 @@ void mark_sector_bad(size_t sector_num) {
  * @returns Non-zero if the sector has been marked as "bad" in the sector map,
  *          zero otherwise.
  */
-char is_sector_bad(size_t sector_num) {
+char is_sector_bad(uint64_t sector_num) {
     return sector_display.sector_map[sector_num] & 0x01;
 }
 
@@ -431,9 +431,9 @@ int32_t get_random_number() {
  *                multiple of 4 -- if it isn't, it will be rounded up to the
  *                next multiple of 4.
 */
-void fill_buffer(char *buffer, size_t size) {
+void fill_buffer(char *buffer, uint64_t size) {
     int32_t *int_buffer = (int32_t *) buffer;
-    size_t i;
+    uint64_t i;
     for(i = 0; i < (size / 4); i++) {
         int_buffer[i] = get_random_number();
     }
@@ -994,7 +994,7 @@ double profile_random_number_generator() {
 int probe_for_optimal_block_size(int fd) {
     struct timeval start_time, end_time, cur_time, prev_time;
     int cur_pow; // Block size, expressed as 2^(cur_pow+9)
-    size_t cur_block_size, total_bytes_written, cur_block_bytes_left, ret;
+    uint64_t cur_block_size, total_bytes_written, cur_block_bytes_left, ret;
     char rate_buffer[13], *buf, msg[128];
     double rates[18], highest_rate;
     int highest_rate_pow;
@@ -1217,7 +1217,7 @@ int probe_for_optimal_block_size(int fd) {
 }
 
 struct timeval last_update_time;
-void print_status_update(size_t cur_sector, size_t num_rounds) {
+void print_status_update(uint64_t cur_sector, uint64_t num_rounds) {
     struct timeval cur_time;
     double rate;
     double secs_since_last_update;
@@ -1245,10 +1245,10 @@ void print_status_update(size_t cur_sector, size_t num_rounds) {
     assert(!gettimeofday(&last_update_time, NULL));
 }
 
-int write_data_to_device(int fd, void *buf, size_t len, size_t optimal_block_size) {
-    size_t block_size, bytes_left, block_bytes_left;
+int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block_size) {
+    uint64_t block_size, bytes_left, block_bytes_left;
     char *aligned_buf;
-    ssize_t ret;
+    int64_t ret;
 
     if(!(aligned_buf = (char *) valloc(len))) {
       return -1;
@@ -1327,16 +1327,16 @@ void memory_error_during_size_probe() {
 // This whole method assumes that no card is going to have a 16MB (or bigger)
 // cache.  If it turns out that there are cards that do have bigger caches,
 // then we might need to come back and revisit this.
-size_t probe_device_size(int fd, size_t num_sectors, size_t optimal_block_size) {
+uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_size) {
     // Start out by writing to 9 different places on the card to minimize the
     // chances that the card is interspersed with good blocks.
     char *buf, *readbuf, keep_searching, str[256];
     unsigned int random_seed, i, bytes_left, ret;
-    size_t initial_sectors[9];
-    size_t low, high, cur, size, j;
-    const size_t slice_size = 4194304;
-    const size_t num_slices = 9;
-    const size_t buf_size = slice_size * num_slices;
+    uint64_t initial_sectors[9];
+    uint64_t low, high, cur, size, j;
+    const uint64_t slice_size = 4194304;
+    const uint64_t num_slices = 9;
+    const uint64_t buf_size = slice_size * num_slices;
     WINDOW *window;
 
     log_log("probe_device_size(): Probing for actual device size");
@@ -1658,8 +1658,8 @@ void io_error_during_speed_test(char write) {
 
 int probe_device_speeds(int fd) {
     char *buf, wr, rd;
-    size_t ctr, bytes_left, cur;
-    ssize_t ret;
+    uint64_t ctr, bytes_left, cur;
+    int64_t ret;
     struct timeval start_time, cur_time;
     double secs, prev_secs;
     char rate[15], str[192];
@@ -1738,7 +1738,7 @@ int probe_device_speeds(int fd) {
                     handle_key_inputs(window);
                     if(rd) {
                         // Choose a random sector, aligned on a 4K boundary
-                        cur = (((((size_t) get_random_number()) << 32) | get_random_number()) & 0x7FFFFFFFFFFFFFFF) %
+                        cur = (((((uint64_t) get_random_number()) << 32) | get_random_number()) & 0x7FFFFFFFFFFFFFFF) %
                             (device_stats.num_sectors - (4096 / device_stats.sector_size)) & 0xFFFFFFFFFFFFFFF8;
                         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
                             erase_and_delete_window(window);
@@ -1909,11 +1909,11 @@ int *random_list() {
  * 
  * @returns The sector on which the slice starts.
 */
-size_t get_slice_start(int slice_num) {
+uint64_t get_slice_start(int slice_num) {
     return (device_stats.num_sectors / 16) * slice_num;
 }
 
-void print_device_summary(ssize_t fifty_percent_failure_round, ssize_t rounds_completed, int abort_reason) {
+void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_completed, int abort_reason) {
     char buf[256];
     char messages[7][384];
     char *out_messages[7];
@@ -2188,7 +2188,7 @@ int parse_command_line_arguments(int argc, char **argv) {
     return 0;
 }
 
-off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int *device_was_disconnected) {
+off_t retriable_lseek(int *fd, off_t position, uint64_t num_rounds_completed, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
     int iret;
@@ -2286,12 +2286,12 @@ off_t retriable_lseek(int *fd, off_t position, size_t num_rounds_completed, int 
     return ret;
 }
 
-ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t num_rounds_completed) {
+int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint64_t num_rounds_completed) {
     int op_retry_count;
     int reset_retry_count;
     int device_was_disconnected;
     int iret;
-    ssize_t ret;
+    int64_t ret;
     WINDOW *window;
     char str[256];
     char *new_device_name;
@@ -2399,11 +2399,11 @@ ssize_t retriable_read(int *fd, void *buf, size_t count, off_t position, size_t 
     return ret;
 }
 
-ssize_t retriable_write(int *fd, void *buf, size_t count, off_t position, size_t num_rounds_completed, int *device_was_disconnected) {
+int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint64_t num_rounds_completed, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
     int iret;
-    ssize_t ret;
+    int64_t ret;
     WINDOW *window;
     char str[256];
     char *new_device_name;
@@ -2556,7 +2556,7 @@ void valloc_error(int errnum) {
 }
 
 void reset_sector_map() {
-    for(int j = 0; j < device_stats.num_sectors; j++) {
+    for(uint64_t j = 0; j < device_stats.num_sectors; j++) {
         sector_display.sector_map[j] &= 0x01;
     }
 
@@ -2566,15 +2566,15 @@ void reset_sector_map() {
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
-    size_t bytes_left_to_write, ret, cur_sector, middle_of_device;
+    uint64_t bytes_left_to_write, ret, cur_sector, middle_of_device;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
     struct timeval speed_start_time;
     struct timeval rng_init_time;
-    size_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
-    size_t num_bad_sectors_this_round, num_good_sectors_this_round;
-    size_t cur_slice, i, j;
+    uint64_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
+    uint64_t num_bad_sectors_this_round, num_good_sectors_this_round;
+    uint64_t cur_slice, i, j;
     int *read_order;
     int op_retry_count; // How many times have we tried the same operation without success?
     int reset_retry_count; // How many times have we tried to reset the device?
