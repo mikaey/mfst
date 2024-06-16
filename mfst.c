@@ -325,8 +325,13 @@ void mark_sectors_read(uint64_t start_sector, uint64_t end_sector) {;
  * Draw the "% sectors bad" display.
  */
 void draw_percentage() {
-    float percent_bad = (((float) device_stats.num_bad_sectors) / ((float) device_stats.num_sectors)) * 100.0;
-    mvprintw(PERCENT_SECTORS_FAILED_DISPLAY_Y, PERCENT_SECTORS_FAILED_DISPLAY_X, "%5.2f%%", percent_bad);
+    float percent_bad;
+    if(device_stats.num_sectors) {
+        percent_bad = (((float) device_stats.num_bad_sectors) / ((float) device_stats.num_sectors)) * 100.0;
+        mvprintw(PERCENT_SECTORS_FAILED_DISPLAY_Y, PERCENT_SECTORS_FAILED_DISPLAY_X, "%5.2f%%", percent_bad);
+    } else {
+        mvprintw(PERCENT_SECTORS_FAILED_DISPLAY_Y, PERCENT_SECTORS_FAILED_DISPLAY_X, "       ");
+    }
 }
 
 /**
@@ -593,8 +598,10 @@ void redraw_screen() {
         attroff(A_BOLD);
 
         // Draw the device name
-        snprintf(str, 23, "%s ", program_options.device_name);
-        mvaddstr(DEVICE_NAME_DISPLAY_Y, DEVICE_NAME_DISPLAY_X, str);
+        if(program_options.device_name) {
+            snprintf(str, 23, "%s ", program_options.device_name);
+            mvaddstr(DEVICE_NAME_DISPLAY_Y, DEVICE_NAME_DISPLAY_X, str);
+        }
 
         // Draw the color key for the right side of the screen
         attron(COLOR_PAIR(BLACK_ON_WHITE));
