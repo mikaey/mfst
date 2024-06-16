@@ -18,6 +18,7 @@
 #include "state.h"
 #include "device.h"
 #include "util.h"
+#include "crc32.h"
 
 // Since we use these strings so frequently, these are just here to save space
 const char *WARNING_TITLE = "WARNING";
@@ -2570,6 +2571,97 @@ void reset_sector_map() {
     // dispatch_sector_map_info_param_event(EVENT_INFO_SECTOR_MAP_RESET, device_stats.num_sectors, device_stats.sector_size, 1, sector_display.sector_map);
 }
 
+uint64_t get_sector_number_xor_val(char *data) {
+    unsigned char *udata = (unsigned char *) data;
+    return
+        (((uint64_t)udata[16]) << 56) |
+        (((uint64_t)udata[32]) << 48) |
+        (((uint64_t)udata[48]) << 40) |
+        (((uint64_t)udata[64]) << 32) |
+        (((uint64_t)udata[80]) << 24) |
+        (((uint64_t)udata[96]) << 16) |
+        (((uint64_t)udata[112]) << 8) |
+        ((uint64_t)udata[128]);
+}
+
+int64_t get_round_num_xor_val(char *data) {
+    unsigned char *udata = (unsigned char *) data;
+    return
+        (((uint64_t)udata[17]) << 56) |
+        (((uint64_t)udata[33]) << 48) |
+        (((uint64_t)udata[49]) << 40) |
+        (((uint64_t)udata[65]) << 32) |
+        (((uint64_t)udata[81]) << 24) |
+        (((uint64_t)udata[97]) << 16) |
+        (((uint64_t)udata[113]) << 8) |
+        ((uint64_t)udata[129]);
+}
+
+void embed_sector_and_round_number(char *data, uint64_t sector_number, int64_t round_num) {
+    // To make sure we don't write all zeros (or all ones) to the same bits
+    // every time, but still make sure the data is readable, we'll take some
+    // data from farther down the sector and xor it with our sector number/round
+    // number.  When read back, the data should be easily recoverable as long as
+    // the checksum is valid.
+    *((uint64_t *) data) = sector_number ^ get_sector_number_xor_val(data);
+    *((int64_t *) (data + 8)) = round_num ^ get_round_num_xor_val(data);
+}
+
+uint64_t decode_embedded_sector_number(char *data) {
+    return (*((uint64_t *) data)) ^ get_sector_number_xor_val(data);
+}
+
+int64_t decode_embedded_round_number(char *data) {
+    return (*((int64_t *) (data + 8))) ^ get_round_num_xor_val(data);
+}
+
+void embed_crc32c(char *data, int sector_size) {
+    *((uint32_t *) &data[sector_size - sizeof(uint32_t)]) = calculate_crc32c(0, data, sector_size - sizeof(uint32_t));
+}
+
+uint32_t get_embedded_crc32c(char *data, int sector_size) {
+    return *((uint32_t *) &data[sector_size - sizeof(uint32_t)]);
+}
+
+void log_sector_contents(uint64_t sector_num, int sector_size, char *expected_data, char *actual_data) {
+    char str[256];
+    char tmp[16];
+    int i;
+
+    log_log("Expected data was:");
+
+    for(i = 0; i < sector_size; i++) {
+        if(!(i % 16)) {
+            snprintf(str, sizeof(str), "    %016lx:", (sector_num * sector_size) + i);
+        }
+
+        snprintf(tmp, sizeof(tmp), " %02x%s", expected_data[i] & 0xff, (i % 16) == 7 ? "    " : "");
+        strcat(str, tmp);
+
+        if((i % 16) == 15 || i == (sector_size - 1)) {
+            log_log(str);
+        }
+    }
+
+    log_log("");
+    log_log("Actual data was:");
+
+    for(i = 0; i < sector_size; i++) {
+        if(!(i % 16)) {
+            snprintf(str, sizeof(str), "    %016lx:", (sector_num * sector_size) + i);
+        }
+
+        snprintf(tmp, sizeof(tmp), " %02x%s", actual_data[i] & 0xff, (i % 16) == 7 ? "    " : "");
+        strcat(str, tmp);
+
+        if((i % 16) == 15 || i == (sector_size - 1)) {
+            log_log(str);
+        }
+    }
+
+    log_log("");
+}
+
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
@@ -3355,6 +3447,21 @@ int main(int argc, char **argv) {
                 fill_buffer(buf, cur_block_size);
                 bytes_left_to_write = cur_block_size;
 
+                // We'll embed some information into the data to try to detect
+                // various types of errors:
+                //  - Sector number (to detect address decoding errors),
+                //  - Round number (to detect failed writes),
+                //  - CRC32 (to detect bit flip errors)
+                //
+                // The first two are going to have a lot of zeros in them all
+                // the time, so to add some randomness to it, we'll use the
+                // top bit of the already-generated random data to decide
+                // whether to invert these values or not.
+                for(i = 0; i < cur_sectors_per_block; i++) {
+                    embed_sector_and_round_number(&(buf[i * device_stats.sector_size]), cur_sector + i, num_rounds);
+                    embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
+                }
+
                 while(bytes_left_to_write) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
@@ -3523,6 +3630,12 @@ int main(int argc, char **argv) {
                 fill_buffer(buf, cur_block_size);
                 bytes_left_to_write = cur_block_size;
 
+                // Re-embed the sector number and CRC32 into the expected data
+                for(i = 0; i < cur_sectors_per_block; i++) {
+                    embed_sector_and_round_number(&(buf[i * device_stats.sector_size]), cur_sector + i, num_rounds);
+                    embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
+                }
+
                 while(bytes_left_to_write) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
@@ -3577,44 +3690,27 @@ int main(int argc, char **argv) {
                             } else if(!memcmp(compare_buf + j, ff_buf, device_stats.sector_size)) {
                                 snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all 0xff's); marking sector bad", cur_sector + (j / device_stats.sector_size));
                                 log_log(str);
+                            } else if(calculate_crc32c(0, compare_buf + j, device_stats.sector_size)) {
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (CRC32 mismatch; embedded value was 0x%08x, calculated value was 0x%08x), marking sector bad",
+                                         cur_sector + (j / device_stats.sector_size), get_embedded_crc32c(compare_buf + j, device_stats.sector_size),
+                                         calculate_crc32c(0, compare_buf + j, device_stats.sector_size - sizeof(uint32_t)));
+                                log_log(str);
+                                log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
+                            } else if(decode_embedded_round_number(compare_buf + j) != num_rounds) {
+                                snprintf(str, sizeof(str), "Data verfication failure in sector %lu (write failure detected; data read back was from round %ld, sector %lu), marking sector bad",
+                                         cur_sector + (j / device_stats.sector_size), decode_embedded_round_number(compare_buf + j) + 1, decode_embedded_sector_number(compare_buf + j));
+                                log_log(str);
+                            } else if(decode_embedded_sector_number(compare_buf + j) != (cur_sector + (j / device_stats.sector_size))) {
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (address decoding error detected, data was originally from sector %lu), marking sector bad",
+                                         cur_sector + (j / device_stats.sector_size), decode_embedded_sector_number(compare_buf + j));
+                                log_log(str);
                             } else {
                                 snprintf(str, sizeof(str), "Data verification failure in sector %lu; marking sector bad", cur_sector + (j / device_stats.sector_size));
                                 log_log(str);
-                                log_log("Expected data was:");
-
-                                for(i = 0; i < device_stats.sector_size; i++) {
-                                    if(!(i % 16)) {
-                                        snprintf(str, sizeof(str), "    %016lx:", (cur_sector * device_stats.sector_size) + j + i);
-                                    }
-
-                                    snprintf(tmp, sizeof(tmp), " %02x%s", buf[j + i] & 0xff, (i % 16) == 7 ? "    " : "");
-                                    strcat(str, tmp);
-
-                                    if((i % 16) == 15 || i == (device_stats.sector_size - 1)) {
-                                        log_log(str);
-                                    }
-                                }
-
-                                log_log("");
-                                log_log("Actual data was:");
-
-                                for(i = 0; i < device_stats.sector_size; i++) {
-                                    if(!(i % 16)) {
-                                        snprintf(str, sizeof(str), "    %016lx:", (cur_sector * device_stats.sector_size) + j + i);
-                                    }
-
-                                    snprintf(tmp, sizeof(tmp), " %02x%s", compare_buf[j + i] & 0xff, (i % 16) == 7 ? "    " : "");
-                                    strcat(str, tmp);
-
-                                    if((i % 16) == 15 || i == (device_stats.sector_size - 1)) {
-                                        log_log(str);
-                                    }
-                                }
-
-                                log_log("");
-
-                                num_bad_sectors++;
+                                log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
                             }
+
+                            num_bad_sectors++;
                         }
 
                         mark_sector_bad(cur_sector + (j / device_stats.sector_size));
