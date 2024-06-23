@@ -349,7 +349,7 @@ void mark_sector_bad(uint64_t sector_num) {
 
     sector_display.sector_map[sector_num] |= 0x09;
 
-    draw_sector(sector_num, BLACK_ON_YELLOW, 1);
+    draw_sectors(sector_num, sector_num + 1);
     draw_percentage();
 }
 
