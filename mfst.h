@@ -4,6 +4,7 @@
 #define VERSION "0.3"
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
 #include <stdio.h>
+#include <sys/stat.h>
 
 
 // Size of the beginning-of-device and middle-of-device buffers
