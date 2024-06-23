@@ -2122,15 +2122,11 @@ int parse_command_line_arguments(int argc, char **argv) {
             case 2:
                 program_options.dont_show_warning_message = 1; break;
             case 3:
-                forced_device = malloc(strlen(optarg) + 1);
-                strcpy(forced_device, optarg);
-                break;
+                assert(forced_device = strdup(optarg)); break;
             case 'e':
                 program_options.force_sectors = strtoull(optarg, NULL, 10); break;
             case 'f':
-                program_options.lock_file = malloc(strlen(optarg) + 1);
-                strcpy(program_options.lock_file, optarg);
-                break;
+                assert(program_options.lock_file = strdup(optarg)); break;
             case 'h':
                 print_help(argv[0]);
                 return -1;
@@ -2142,9 +2138,7 @@ int parse_command_line_arguments(int argc, char **argv) {
                     return -1;
                 }
 
-                assert(program_options.log_file = malloc(strlen(optarg) + 1));
-                strcpy(program_options.log_file, optarg);
-                break;
+                assert(program_options.log_file = strdup(optarg)); break;
             case 'n':
                 program_options.no_curses = 1;
                 program_options.orig_no_curses = 1;
@@ -2157,17 +2151,14 @@ int parse_command_line_arguments(int argc, char **argv) {
                     return -1;
                 }
 
-                assert(program_options.stats_file = malloc(strlen(optarg) + 1));
-                strcpy(program_options.stats_file, optarg);
-                break;
+                assert(program_options.stats_file = strdup(optarg)); break;
             case 't':
                 if(program_options.state_file) {
                     printf("Only one state file option may be specified on the command line.\n");
                     return -1;
                 }
 
-                assert(program_options.state_file = malloc(strlen(optarg) + 1));
-                strcpy(program_options.state_file, optarg);
+                assert(program_options.state_file = strdup(optarg)); break;
         }
     }
 
@@ -2178,8 +2169,7 @@ int parse_command_line_arguments(int argc, char **argv) {
                 return -1;
             }
 
-            assert(program_options.device_name = malloc(strlen(argv[c]) + 1));
-            strcpy(program_options.device_name, argv[c]);
+            assert(program_options.device_name = strdup(argv[c]));
         }
     }
 
@@ -2189,8 +2179,7 @@ int parse_command_line_arguments(int argc, char **argv) {
     }
 
     if(!program_options.lock_file) {
-        program_options.lock_file = malloc(10);
-        strcpy(program_options.lock_file, "mfst.lock");
+        program_options.lock_file = strdup("mfst.lock");
     }
 
     return 0;
