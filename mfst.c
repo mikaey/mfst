@@ -19,6 +19,7 @@
 #include "block_size_test.h"
 #include "crc32.h"
 #include "device.h"
+#include "lockfile.h"
 #include "mfst.h"
 #include "state.h"
 #include "util.h"
@@ -30,7 +31,6 @@ const char *ERROR_TITLE = "ERROR";
 struct {
     FILE *log_file;
     FILE *stats_file;
-    int lockfile_fd;
 } file_handles;
 
 struct {
@@ -58,35 +58,6 @@ char bod_buffer[BOD_MOD_BUFFER_SIZE];
 char mod_buffer[BOD_MOD_BUFFER_SIZE];
 int64_t num_rounds;
 
-/**
- * Test to see if the lockfile is locked.
- * 
- * @returns Zero if the lockfile is not locked, or non-zero if it is.
- */
-int is_lockfile_locked() {
-    int retval = lockf(file_handles.lockfile_fd, F_TEST, 0);
-    return (retval == -1 && (errno == EACCES || errno == EAGAIN));
-}
-
-/**
- * Locks the lockfile.
- * 
- * @returns Zero if the lockfile was locked successfully, or non-zero if it was
- *          not.
- */
-int lock_lockfile() {
-    return lockf(file_handles.lockfile_fd, F_TLOCK, 0);
-}
-
-/**
- * Unlocks the lockfile.
- * 
- * @returns Zero if the lockfile was unlocked successfully, or non-zero if it
- *          was not.
- */
-int unlock_lockfile() {
-    return lockf(file_handles.lockfile_fd, F_ULOCK, 0);
-}
 
 /**
  * Log the given string to the log file, if the log file is open.  If curses
@@ -2447,7 +2418,6 @@ int main(int argc, char **argv) {
     zero_buf = NULL;
     ff_buf = NULL;
     read_order = NULL;
-    file_handles.lockfile_fd = -1;
     program_options.lock_file = NULL;
     program_options.state_file = NULL;
     forced_device = NULL;
@@ -2459,9 +2429,7 @@ int main(int argc, char **argv) {
             close(fd);
         }
 
-        if(file_handles.lockfile_fd != -1) {
-            close(file_handles.lockfile_fd);
-        }
+        close_lockfile();
 
         if(file_handles.log_file) {
             fclose(file_handles.log_file);
@@ -2665,18 +2633,7 @@ int main(int argc, char **argv) {
         log_log(str);
     }
 
-    if((file_handles.lockfile_fd = open(program_options.lock_file, O_WRONLY | O_CREAT)) == -1) {
-        local_errno = errno;
-        snprintf(str, sizeof(str), "Unable to open lock file %s: %s", program_options.lock_file, strerror(local_errno));
-        log_log(str);
-
-        snprintf(str, sizeof(str), "Unable to open lock file %s:", program_options.lock_file);
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            str,
-            strerror(local_errno),
-            NULL
-        }, 1);
-
+    if(iret = open_lockfile(program_options.lock_file)) {
         cleanup();
         return -1;
     }

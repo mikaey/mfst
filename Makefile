@@ -1,7 +1,7 @@
-mfst: mfst.o base64.o state.o device.o util.o crc32.o block_size_test.o
-	gcc -g -o mfst mfst.o state.o base64.o util.o device.o crc32.o block_size_test.o -lncurses -ludev -ljson-c
+mfst: mfst.o base64.o state.o device.o util.o crc32.o lockfile.o block_size_test.o
+	gcc -g -o mfst mfst.o state.o base64.o util.o device.o crc32.o lockfile.o block_size_test.o -lncurses -ludev -ljson-c
 
-mfst.o: mfst.c base64.h block_size_test.h crc32.h device.h mfst.h state.h util.h
+mfst.o: mfst.c base64.h block_size_test.h crc32.h device.h lockfile.h mfst.h state.h util.h
 	gcc -c -g -o mfst.o mfst.c
 
 base64.o: base64.c base64.h
@@ -19,5 +19,8 @@ util.o: util.c util.h
 crc32.o: crc32.c crc32.h
 	gcc -c -g -o crc32.o crc32.c
 
-block_size_test.o: block_size_test.c block_size_test.h mfst.h util.h
+lockfile.o: lockfile.c lockfile.h mfst.h
+	gcc -c -g -o lockfile.o lockfile.c
+
+block_size_test.o: block_size_test.c block_size_test.h lockfile.h mfst.h util.h
 	gcc -c -g -o block_size_test.o block_size_test.c
