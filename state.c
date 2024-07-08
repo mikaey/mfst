@@ -1,13 +1,14 @@
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <string.h>
 #include <assert.h>
 #include <errno.h>
 #include <json-c/json_object.h>
-#include <json-c/json_util.h>
 #include <json-c/json_pointer.h>
+#include <json-c/json_util.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include "base64.h"
 #include "mfst.h"
 

@@ -1,24 +1,25 @@
 #define _LARGEFILE64_SOURCE
 #define _GNU_SOURCE
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <linux/fs.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <time.h>
-#include <stdlib.h>
-#include <sys/time.h>
+
 #include <assert.h>
-#include <locale.h>
 #include <curses.h>
-#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
+#include <linux/fs.h>
+#include <locale.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#include "crc32.h"
+#include "device.h"
 #include "mfst.h"
 #include "state.h"
-#include "device.h"
 #include "util.h"
-#include "crc32.h"
 
 // Since we use these strings so frequently, these are just here to save space
 const char *WARNING_TITLE = "WARNING";

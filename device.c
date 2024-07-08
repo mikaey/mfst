@@ -5,13 +5,14 @@
 #include <libudev.h>
 #include <linux/fs.h>
 #include <linux/usbdevice_fs.h>
-#include <sys/ioctl.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
+
 #include "device.h"
 #include "mfst.h"
 
