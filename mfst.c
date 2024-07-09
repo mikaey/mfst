@@ -21,6 +21,7 @@
 #include "device.h"
 #include "lockfile.h"
 #include "mfst.h"
+#include "rng.h"
 #include "state.h"
 #include "util.h"
 
@@ -41,9 +42,6 @@ struct {
 } stress_test_stats;
 
 unsigned long initial_seed;
-unsigned long current_seed;
-struct random_data random_state;
-char random_number_state_buf[256];
 char speed_qualifications_shown;
 char ncurses_active;
 char *forced_device;
@@ -371,52 +369,6 @@ void redraw_sector_map() {
     }
 
     draw_sectors(0, device_stats.num_sectors);
-}
-
-/**
- * Resets the random number generator and gives it the given seed.
- * 
- * @param seed  The seed to provide to the random number generator.
-*/
-void init_random_number_generator(unsigned int seed) {
-    memset(random_number_state_buf, 0, sizeof(random_number_state_buf));
-    initstate_r(seed, random_number_state_buf, sizeof(random_number_state_buf), &random_state);
-}
-
-/**
- * Obtains a random number from the random number generator.  Since random()
- * only generates 31 bits of random data, this function randomizes the uppermost
- * bit of the result.
- * 
- * @returns The generated random number.
-*/
-int32_t get_random_number() {
-    int32_t result;
-    random_r(&random_state, &result);
-
-    // random() and random_r() generate random numbers between 0 and
-    // 0x7FFFFFFF -- which means we're not testing 1 out of every 32 bits on
-    // the device if we just accept this value.  To spice things up a little,
-    // we'll throw some extra randomness into the top bit.
-    result |= ((current_seed & result & 0x00000001) | (~(current_seed & (result >> 1)) & 0x00000001)) << 31;
-    return result;
-}
-
-/**
- * Fills `buffer` with `size` random bytes.
- * 
- * @param buffer  A pointer to the buffer to be populated with random bytes.
- * 
- * @param size    The number of bytes to write to the buffer.  Must be a
- *                multiple of 4 -- if it isn't, it will be rounded up to the
- *                next multiple of 4.
-*/
-void fill_buffer(char *buffer, uint64_t size) {
-    int32_t *int_buffer = (int32_t *) buffer;
-    uint64_t i;
-    for(i = 0; i < (size / 4); i++) {
-        int_buffer[i] = get_random_number();
-    }
 }
 
 /**
@@ -918,11 +870,11 @@ double profile_random_number_generator() {
     window = message_window(stdscr, NULL, (char *[]) { "Profiling random number generator...", NULL }, 0);
 
     // Generate random numbers for 5 seconds.
-    init_random_number_generator(0);
+    rng_init(0);
     assert(!gettimeofday(&start_time, NULL));
     do {
         for(i = 0; i < 100; i++) {
-            get_random_number();
+            rng_get_random_number();
             total_random_numbers_generated++;
         }
         assert(!gettimeofday(&end_time, NULL));
@@ -1100,8 +1052,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     }
 
     random_seed = time(NULL);
-    init_random_number_generator(random_seed);
-    fill_buffer(buf, buf_size);
+    rng_init(random_seed);
+    rng_fill_buffer(buf, buf_size);
 
     // Decide where we'll put the initial data.  The first and last writes will
     // go at the beginning and end of the card; the other writes will be at
@@ -1114,7 +1066,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     high = num_sectors / 8;
 
     for(i = 1; i < (num_slices - 1); i++) {
-        initial_sectors[i] = low + ((get_random_number() & RAND_MAX) % (high - low));
+        initial_sectors[i] = low + ((rng_get_random_number() & RAND_MAX) % (high - low));
         low = (num_sectors / (num_slices - 1)) * i;
         
         if((initial_sectors[i] + (slice_size / device_stats.sector_size)) > low) {
@@ -1282,7 +1234,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
         }
 
         // Generate some more random data
-        fill_buffer(buf, slice_size * num_slices);
+        rng_fill_buffer(buf, slice_size * num_slices);
         if(write_data_to_device(fd, buf, slice_size * num_slices, optimal_block_size)) {
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
@@ -1472,7 +1424,7 @@ int probe_device_speeds(int fd) {
             prev_secs = 0;
             while(secs < 30) {
                 if(wr) {
-                    fill_buffer(buf, rd ? 4096 : device_stats.block_size);
+                    rng_fill_buffer(buf, rd ? 4096 : device_stats.block_size);
                 }
 
                 bytes_left = rd ? 4096 : device_stats.block_size;
@@ -1480,7 +1432,7 @@ int probe_device_speeds(int fd) {
                     handle_key_inputs(window);
                     if(rd) {
                         // Choose a random sector, aligned on a 4K boundary
-                        cur = (((((uint64_t) get_random_number()) << 32) | get_random_number()) & 0x7FFFFFFFFFFFFFFF) %
+                        cur = (((((uint64_t) rng_get_random_number()) << 32) | rng_get_random_number()) & 0x7FFFFFFFFFFFFFFF) %
                             (device_stats.num_sectors - (4096 / device_stats.sector_size)) & 0xFFFFFFFFFFFFFFF8;
                         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
                             erase_and_delete_window(window);
@@ -1627,7 +1579,7 @@ int *random_list() {
 
     for(i = 0; i < 16; i++) {
         // Pick a new number and add it to the list
-        j = (get_random_number() & RAND_MAX) % (16 - i);
+        j = (rng_get_random_number() & RAND_MAX) % (16 - i);
         list[i] = source[j];
 
         // Remove the item from the list
@@ -3014,7 +2966,7 @@ int main(int argc, char **argv) {
         state_data.first_failure_round = state_data.ten_percent_failure_round = state_data.twenty_five_percent_failure_round = -1;
     }
 
-    init_random_number_generator(initial_seed);
+    rng_init(initial_seed);
 
     buf = (char *) valloc(device_stats.block_size);
     if(!buf) {
@@ -3126,7 +3078,7 @@ int main(int argc, char **argv) {
         read_order = random_list();
 
         for(cur_slice = 0, restart_slice = 0; cur_slice < 16; cur_slice++, restart_slice = 0) {
-            srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
+            rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
@@ -3153,7 +3105,7 @@ int main(int argc, char **argv) {
                     cur_sectors_per_block = sectors_per_block;
                 }
 
-                fill_buffer(buf, cur_block_size);
+                rng_fill_buffer(buf, cur_block_size);
                 bytes_left_to_write = cur_block_size;
 
                 // We'll embed some information into the data to try to detect
@@ -3310,7 +3262,7 @@ int main(int argc, char **argv) {
         }
 
         for(cur_slice = 0; cur_slice < 16; cur_slice++) {
-            srandom_r(initial_seed + read_order[cur_slice] + (num_rounds * 16), &random_state);
+            rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
@@ -3336,7 +3288,7 @@ int main(int argc, char **argv) {
                 }
 
                 // Regenerate the data we originally wrote to the device.
-                fill_buffer(buf, cur_block_size);
+                rng_fill_buffer(buf, cur_block_size);
                 bytes_left_to_write = cur_block_size;
 
                 // Re-embed the sector number and CRC32 into the expected data
