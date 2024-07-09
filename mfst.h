@@ -316,6 +316,12 @@
 #define LOAD_STATE_FILE_DOES_NOT_EXIST 2
 #define LOAD_STATE_LOAD_ERROR 3
 
+// Bit flags for the sector map
+#define SECTOR_MAP_FLAG_FAILED_THIS_ROUND  0x08
+#define SECTOR_MAP_FLAG_READ_THIS_ROUND    0x04
+#define SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND 0x02
+#define SECTOR_MAP_FLAG_FAILED             0x01
+
 /**
  * Log the given string to the log file, if the log file is open.  If curses
  * mode is turned off, also log the given string to stdout.  The time is

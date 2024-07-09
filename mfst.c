@@ -226,10 +226,10 @@ void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
         this_round = 0;
 
         for(j = i * sector_display.sectors_per_block; j < ((i * sector_display.sectors_per_block) + num_sectors_in_cur_block); j++) {
-            cur_block_has_bad_sectors |= sector_display.sector_map[j] & 0x01;
-            num_written_sectors += (sector_display.sector_map[j] & 0x02) >> 1;
-            num_read_sectors += (sector_display.sector_map[j] & 0x04) >> 2;
-            this_round |= (sector_display.sector_map[j] & 0x08);
+            cur_block_has_bad_sectors |= sector_display.sector_map[j] & SECTOR_MAP_FLAG_FAILED;
+            num_written_sectors += (sector_display.sector_map[j] & SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND) >> 1;
+            num_read_sectors += (sector_display.sector_map[j] & SECTOR_MAP_FLAG_READ_THIS_ROUND) >> 2;
+            this_round |= sector_display.sector_map[j] & SECTOR_MAP_FLAG_FAILED_THIS_ROUND;
         }
 
         if(cur_block_has_bad_sectors) {
@@ -267,7 +267,7 @@ void mark_sectors_written(uint64_t start_sector, uint64_t end_sector) {
     uint64_t i;
 
     for(i = start_sector; i < end_sector && i < device_stats.num_sectors; i++) {
-        sector_display.sector_map[i] |= 0x02;
+        sector_display.sector_map[i] |= SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND;
     }
 
     draw_sectors(start_sector, end_sector);
@@ -288,7 +288,7 @@ void mark_sectors_read(uint64_t start_sector, uint64_t end_sector) {;
     uint64_t i;
 
     for(i = start_sector; i < end_sector && i < device_stats.num_sectors; i++) {
-        sector_display.sector_map[i] |= 0x04;
+        sector_display.sector_map[i] |= SECTOR_MAP_FLAG_READ_THIS_ROUND;
     }
 
     draw_sectors(start_sector, end_sector);
@@ -315,11 +315,11 @@ void draw_percentage() {
  * @param sector_num  The sector number of the sector to be marked as bad.
  */
 void mark_sector_bad(uint64_t sector_num) {
-    if(!(sector_display.sector_map[sector_num] & 0x01)) {
+    if(!(sector_display.sector_map[sector_num] & SECTOR_MAP_FLAG_FAILED)) {
         device_stats.num_bad_sectors++;
     }
 
-    sector_display.sector_map[sector_num] |= 0x09;
+    sector_display.sector_map[sector_num] |= SECTOR_MAP_FLAG_FAILED_THIS_ROUND | SECTOR_MAP_FLAG_FAILED;
 
     draw_sectors(sector_num, sector_num + 1);
     draw_percentage();
@@ -334,7 +334,7 @@ void mark_sector_bad(uint64_t sector_num) {
  *          zero otherwise.
  */
 char is_sector_bad(uint64_t sector_num) {
-    return sector_display.sector_map[sector_num] & 0x01;
+    return sector_display.sector_map[sector_num] & SECTOR_MAP_FLAG_FAILED;
 }
 
 /**
@@ -2240,7 +2240,7 @@ void valloc_error(int errnum) {
 
 void reset_sector_map() {
     for(uint64_t j = 0; j < device_stats.num_sectors; j++) {
-        sector_display.sector_map[j] &= 0x01;
+        sector_display.sector_map[j] &= SECTOR_MAP_FLAG_FAILED;
     }
 
     // dispatch_sector_map_info_param_event(EVENT_INFO_SECTOR_MAP_RESET, device_stats.num_sectors, device_stats.sector_size, 1, sector_display.sector_map);
@@ -3027,7 +3027,7 @@ int main(int argc, char **argv) {
     } else {
         // Count up the number of bad sectors and update device_stats.num_bad_sectors
         for(j = 0; j < device_stats.num_sectors; j++) {
-            if(sector_display.sector_map[j] & 0x01) {
+            if(sector_display.sector_map[j] & SECTOR_MAP_FLAG_FAILED) {
                 device_stats.num_bad_sectors++;
             }
         }
@@ -3242,7 +3242,7 @@ int main(int argc, char **argv) {
                 // Unmark the sectors we've written in this slice so far
                 log_log("Device disconnect was detected during this slice -- restarting slice");
                 for(j = get_slice_start(read_order[cur_slice]); j < last_sector; j++) {
-                    sector_display.sector_map[j] &= 0x01;
+                    sector_display.sector_map[j] &= SECTOR_MAP_FLAG_FAILED;
                 }
 
                 cur_slice--;
