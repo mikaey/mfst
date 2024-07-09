@@ -154,6 +154,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     if(ioctl(fd, BLKSSZGET, &sector_size)) {
         snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): ioctl() failed while trying to get the device's sector size: %s", strerror(errno));
         log_log(message_buffer);
+        free(read_buffer);
         return -1;
     }
 
@@ -162,6 +163,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     // Make sure we're at the beginning of the device
     if(lseek(fd, 0, SEEK_SET) == -1) {
         snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Failed to seek to the beginning of the device: %s", strerror(errno));
+        free(read_buffer);
         return -1;
     }
 
@@ -175,6 +177,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
             if(lseek(fd, bod_mod_buffer_size - bytes_left_to_read, SEEK_SET) == -1) {
                 snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
                 log_log(message_buffer);
+                free(read_buffer);
                 return -1;
             }
         } else {
@@ -184,6 +187,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
 
     if(!memcmp(read_buffer, bod_buffer, bod_mod_buffer_size)) {
         log_log("compare_bod_mod_data(): Beginning-of-device data matches");
+        free(read_buffer);
         return 0;
     } else {
       // Do a sector-by-sector comparison and count up the sectors
@@ -201,27 +205,52 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     if(lseek(fd, middle, SEEK_SET) == -1) {
         snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
         log_log(message_buffer);
+        free(read_buffer);
         return -1;
     }
 
     while(bytes_left_to_read) {
-        if((ret = read(fd, read_buffer + (bod_mod_buffer_size - bytes_left_to_read), bytes_left_to_read)) == -1) {
-            memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
-            bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
+        num_sectors_to_read = get_max_writable_sectors((middle + (bod_mod_buffer_size - bytes_left_to_read)) / device_stats.sector_size, bytes_left_to_read / device_stats.sector_size);
+        if(num_sectors_to_read) {
+            if((ret = read(fd, read_buffer + (bod_mod_buffer_size - bytes_left_to_read), (num_sectors_to_read * device_stats.sector_size) + (bytes_left_to_read % device_stats.sector_size))) == -1) {
+                // If we get a read error here, we'll just zero out the rest of the sector and move on
+                memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size));
+                bytes_left_to_read -= ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size);
+                if(lseek(fd, middle + (bod_mod_buffer_size - bytes_left_to_read), SEEK_SET) == -1) {
+                    snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+                    log_log(message_buffer);
+                    free(read_buffer);
+                    return -1;
+                }
+            } else {
+                bytes_left_to_read -= ret;
+            }
+        }
+
+        // For unwritable sectors, just zero out the read buffer
+        num_sectors_to_read = get_max_unwritable_sectors((middle + (bod_mod_buffer_size - bytes_left_to_read)) / device_stats.sector_size, bytes_left_to_read / device_stats.sector_size);
+        if(num_sectors_to_read) {
+            memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, num_sectors_to_read * device_stats.sector_size);
+            bytes_left_to_read -= num_sectors_to_read * device_stats.sector_size;
+
+            // Seek past the bad sectors
             if(lseek(fd, middle + (bod_mod_buffer_size - bytes_left_to_read), SEEK_SET) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
                 log_log(message_buffer);
+                free(read_buffer);
                 return -1;
             }
-        } else {
-            bytes_left_to_read -= ret;
         }
     }
 
     if(!memcmp(read_buffer, mod_buffer, bod_mod_buffer_size)) {
         log_log("compare_bod_mod_data(): Middle-of-device data matches");
+        free(read_buffer);
         return 0;
     } else {
+        // We're done with read_buffer now, we can go ahead and free() it
+        free(read_buffer);
+
         // Do a sector-by-sector comparison and count up the sectors
         for(bytes_left_to_read = 0; bytes_left_to_read < bod_mod_buffer_size; bytes_left_to_read += sector_size) {
             if(!memcmp(read_buffer + bytes_left_to_read, mod_buffer + bytes_left_to_read, sector_size)) {
@@ -331,6 +360,9 @@ int find_device(char   * preferred_dev_name,
         if(!(matched_devices[0] = strdup(preferred_dev_name))) {
             snprintf(message_buffer, sizeof(message_buffer), "find_device(): strdup() failed: %s", strerror(errno));
             log_log(message_buffer);
+
+            free(matched_devices);
+
             return -1;
         }
     } else {
