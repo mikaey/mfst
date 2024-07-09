@@ -2246,6 +2246,12 @@ void reset_sector_map() {
     // dispatch_sector_map_info_param_event(EVENT_INFO_SECTOR_MAP_RESET, device_stats.num_sectors, device_stats.sector_size, 1, sector_display.sector_map);
 }
 
+void reset_sector_map_partial(uint64_t start, uint64_t end) {
+    for(uint64_t j = start; j < end; j++) {
+        sector_display.sector_map[j] &= SECTOR_MAP_FLAG_FAILED;
+    }
+}
+
 uint64_t get_sector_number_xor_val(char *data) {
     unsigned char *udata = (unsigned char *) data;
     return
@@ -3027,7 +3033,7 @@ int main(int argc, char **argv) {
     } else {
         // Count up the number of bad sectors and update device_stats.num_bad_sectors
         for(j = 0; j < device_stats.num_sectors; j++) {
-            if(sector_display.sector_map[j] & SECTOR_MAP_FLAG_FAILED) {
+            if(is_sector_bad(j)) {
                 device_stats.num_bad_sectors++;
             }
         }
@@ -3067,10 +3073,7 @@ int main(int argc, char **argv) {
             mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Writing ");
         }
 
-        // Reset the sector map.
-        for(j = 0; j < device_stats.num_sectors; j++) {
-            sector_display.sector_map[j] &= 0x01;
-        }
+        reset_sector_map();
 
         redraw_sector_map();
         refresh();
@@ -3241,9 +3244,7 @@ int main(int argc, char **argv) {
             if(restart_slice) {
                 // Unmark the sectors we've written in this slice so far
                 log_log("Device disconnect was detected during this slice -- restarting slice");
-                for(j = get_slice_start(read_order[cur_slice]); j < last_sector; j++) {
-                    sector_display.sector_map[j] &= SECTOR_MAP_FLAG_FAILED;
-                }
+                reset_sector_map_partial(get_slice_start(read_order[cur_slice]), last_sector);
 
                 cur_slice--;
                 redraw_sector_map();
