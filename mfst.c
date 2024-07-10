@@ -911,7 +911,7 @@ double profile_random_number_generator() {
 }
 
 struct timeval last_update_time;
-void print_status_update(uint64_t cur_sector, uint64_t num_rounds) {
+void print_status_update() {
     struct timeval cur_time;
     double rate;
     double secs_since_last_update;
@@ -3223,7 +3223,7 @@ int main(int argc, char **argv) {
                     device_stats.bytes_since_last_status_update += ret;
                     state_data.bytes_written += ret;
 
-                    print_status_update(cur_sector, num_rounds);
+                    print_status_update();
                 }
 
                 if(restart_slice) {
@@ -3333,7 +3333,7 @@ int main(int argc, char **argv) {
                     device_stats.bytes_since_last_status_update += ret;
                     sectors_read += ret / device_stats.sector_size;
 
-                    print_status_update(sectors_read, num_rounds);
+                    print_status_update();
                 }
 
                 mark_sectors_read(cur_sector, cur_sector + cur_sectors_per_block);
