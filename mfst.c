@@ -187,7 +187,7 @@ void draw_sector(uint64_t sector_num, int color, int with_diamond) {
     if(with_diamond) {
         mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ACS_DIAMOND);
     } else {
-        mvaddstr(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, " ");
+        mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ' ');
     }
 
     attroff(COLOR_PAIR(color));
