@@ -3224,7 +3224,6 @@ int main(int argc, char **argv) {
                     state_data.bytes_written += ret;
 
                     print_status_update(cur_sector, num_rounds);
-
                 }
 
                 if(restart_slice) {
