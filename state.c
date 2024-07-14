@@ -615,7 +615,7 @@ int load_state() {
             log_log("load_state(): state file not present");
             return LOAD_STATE_FILE_DOES_NOT_EXIST;
         } else {
-            snprintf(str, sizeof(str), "load_state(): unable to stat() state file: %s", strerror(errno));
+            snprintf(str, sizeof(str), "load_state(): unable to stat() state file: %m");
             log_log(str);
             return LOAD_STATE_LOAD_ERROR;
         }
@@ -675,7 +675,7 @@ int load_state() {
                 // Go ahead and copy it over to a buffer
                 buffers[i] = malloc(json_object_get_string_len(obj) + 1);
                 if(!buffers[i]) {
-                    snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
+                    snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %m");
                     log_log(str);
                     free_buffers();
 
@@ -749,7 +749,7 @@ int load_state() {
 
     // Allocate memory for the sector map, which we'll need to unpack later
     if(!(sector_display.sector_map = malloc(detected_size / sector_size))) {
-        snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %s", strerror(errno));
+        snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %m");
         log_log(str);
         free_buffers();
 

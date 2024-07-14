@@ -146,13 +146,13 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     int sector_size;
 
     if(!(read_buffer = malloc(bod_mod_buffer_size))) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data: malloc() failed: %s", strerror(errno));
+        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data: malloc() failed: %m");
         return -1;
     }
 
     // Get the device's sector size.
     if(ioctl(fd, BLKSSZGET, &sector_size)) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): ioctl() failed while trying to get the device's sector size: %s", strerror(errno));
+        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): ioctl() failed while trying to get the device's sector size: %m");
         log_log(message_buffer);
         free(read_buffer);
         return -1;
@@ -162,7 +162,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
 
     // Make sure we're at the beginning of the device
     if(lseek(fd, 0, SEEK_SET) == -1) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Failed to seek to the beginning of the device: %s", strerror(errno));
+        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Failed to seek to the beginning of the device: %m");
         free(read_buffer);
         return -1;
     }
@@ -175,7 +175,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
             memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
             bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
             if(lseek(fd, bod_mod_buffer_size - bytes_left_to_read, SEEK_SET) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
                 log_log(message_buffer);
                 free(read_buffer);
                 return -1;
@@ -203,7 +203,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     middle = device_size / 2;
 
     if(lseek(fd, middle, SEEK_SET) == -1) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
         log_log(message_buffer);
         free(read_buffer);
         return -1;
@@ -217,7 +217,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
                 memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size));
                 bytes_left_to_read -= ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size);
                 if(lseek(fd, middle + (bod_mod_buffer_size - bytes_left_to_read), SEEK_SET) == -1) {
-                    snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %s", strerror(errno));
+                    snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
                     log_log(message_buffer);
                     free(read_buffer);
                     return -1;
@@ -312,13 +312,13 @@ int find_device(char   * preferred_dev_name,
 
         // Let's just probe preferred_dev_name instead of bothering udev
         if((fd = open(preferred_dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: open() returned an error: %s", preferred_dev_name, strerror(errno));
+            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: open() returned an error: %m", preferred_dev_name);
             log_log(message_buffer);
             return 0;
         }
 
         if(ioctl(fd, BLKGETSIZE64, &reported_device_size)) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: an ioctl() call to get the size of the device returned an error: %s", preferred_dev_name, strerror(errno));
+            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: an ioctl() call to get the size of the device returned an error: %m", preferred_dev_name);
             log_log(message_buffer);
 
             close(fd);
@@ -350,7 +350,7 @@ int find_device(char   * preferred_dev_name,
 
         // Add the device to our list of devices
         if(!(matched_devices = malloc(++num_matches * sizeof(char *)))) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): malloc() failed: %s", strerror(errno));
+            snprintf(message_buffer, sizeof(message_buffer), "find_device(): malloc() failed: %m");
             log_log(message_buffer);
 
             errno = ENOMEM;
@@ -358,7 +358,7 @@ int find_device(char   * preferred_dev_name,
         }
 
         if(!(matched_devices[0] = strdup(preferred_dev_name))) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): strdup() failed: %s", strerror(errno));
+            snprintf(message_buffer, sizeof(message_buffer), "find_device(): strdup() failed: %m");
             log_log(message_buffer);
 
             free(matched_devices);
@@ -451,7 +451,7 @@ int find_device(char   * preferred_dev_name,
             }
 
             if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: open() returned an error: %s", dev_name, strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: open() returned an error: %m", dev_name);
                 log_log(message_buffer);
 
                 udev_device_unref(device);
@@ -480,7 +480,7 @@ int find_device(char   * preferred_dev_name,
 
             // Add the device to our list of devices
             if(!(new_matched_devices = realloc(matched_devices, ++num_matches * sizeof(char *)))) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): realloc() failed: %s", strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "find_device(): realloc() failed: %m");
                 log_log(message_buffer);
 
                 udev_device_unref(device);
@@ -496,7 +496,7 @@ int find_device(char   * preferred_dev_name,
             matched_devices = new_matched_devices;
 
             if(!(matched_devices[num_matches - 1] = strdup(dev_name))) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_devices(): strdup() failed: %s", strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "find_devices(): strdup() failed: %m");
                 log_log(message_buffer);
 
                 udev_device_unref(device);
@@ -552,8 +552,8 @@ int find_device(char   * preferred_dev_name,
 
     // Ok, we have a single match.  Grab the device number for it.
     if(stat(matched_devices[match_index], &fs)) {
-        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s, but got an error while trying to stat() it: %s",
-            matched_devices[match_index], strerror(errno));
+        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s, but got an error while trying to stat() it: %m",
+            matched_devices[match_index]);
         log_log(message_buffer);
         log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
 
@@ -570,8 +570,8 @@ int find_device(char   * preferred_dev_name,
     // Ok, we have a single match.  Re-open the device read/write.
     if((fd = open(matched_devices[match_index], O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
         // Well crap.
-        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s, but got an error while trying to re-open() it: %s",
-            matched_devices[match_index], strerror(errno));
+        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s, but got an error while trying to re-open() it: %m",
+            matched_devices[match_index]);
         log_log(message_buffer);
         log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
 
@@ -684,7 +684,7 @@ int wait_for_device_reconnect(size_t   expected_device_size,
             }
 
             if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Rejecting device %s: open() returned an error: %s", dev_name, strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Rejecting device %s: open() returned an error: %m", dev_name);
                 log_log(message_buffer);
 
                 udev_device_unref(device);
@@ -710,7 +710,7 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
             // Ok, we have a match.  Get stats on the device.
             if(stat(dev_name, &fs) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to stat() it: %s", dev_name, strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to stat() it: %m", dev_name);
                 log_log(message_buffer);
                 log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
 
@@ -721,8 +721,8 @@ int wait_for_device_reconnect(size_t   expected_device_size,
             // Re-open the device read/write.
             if((fd = open(dev_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
                 // Well crap.
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to re-open() it: %s",
-                         dev_name, strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to re-open() it: %m",
+                         dev_name);
                 log_log(message_buffer);
                 log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
 
@@ -735,7 +735,7 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
             // Copy the device name over to device_name.
             if(!(new_dev_name = strdup(dev_name))) {
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but a call to strdup() failed: %s", dev_name, strerror(errno));
+                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but a call to strdup() failed: %m", dev_name);
                 log_log(message_buffer);
 
                 close(fd);
