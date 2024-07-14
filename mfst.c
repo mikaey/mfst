@@ -3388,7 +3388,7 @@ int main(int argc, char **argv) {
                                 log_log(str);
                                 log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
                             } else if(decode_embedded_round_number(compare_buf + j) != num_rounds) {
-                                snprintf(str, sizeof(str), "Data verfication failure in sector %lu (write failure detected; data read back was from round %ld, sector %lu), marking sector bad",
+                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (write failure detected; data read back was from round %ld, sector %lu), marking sector bad",
                                          cur_sector + (j / device_stats.sector_size), decode_embedded_round_number(compare_buf + j) + 1, decode_embedded_sector_number(compare_buf + j));
                                 log_log(str);
                             } else if(decode_embedded_sector_number(compare_buf + j) != (cur_sector + (j / device_stats.sector_size))) {
