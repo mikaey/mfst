@@ -1466,15 +1466,15 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
     int i;
 
     switch(abort_reason) {
-    case 1:
+    case ABORT_REASON_READ_ERROR:
         strncpy(buf, "read error", sizeof(buf)); break;
-    case 2:
+    case ABORT_REASON_WRITE_ERROR:
         strncpy(buf, "write error", sizeof(buf)); break;
-    case 3:
+    case ABORT_REASON_SEEK_ERROR:
         strncpy(buf, "seek error", sizeof(buf)); break;
-    case 4:
+    case ABORT_REASON_FIFTY_PERCENT_FAILURE:
         strncpy(buf, "50% of sectors have failed", sizeof(buf)); break;
-    case 5:
+    case ABORT_REASON_DEVICE_REMOVED:
         strncpy(buf, "device went away", sizeof(buf)); break;
     default:
         strncpy(buf, "unknown", sizeof(buf)); break;
