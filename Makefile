@@ -30,3 +30,6 @@ rng.o: rng.c rng.h
 
 block_size_test.o: block_size_test.c block_size_test.h lockfile.h mfst.h ncurses.h rng.h util.h
 	gcc -c -g -o block_size_test.o block_size_test.c
+
+clean:
+	rm mfst *.o
