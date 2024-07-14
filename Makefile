@@ -28,5 +28,5 @@ ncurses.o: ncurses.c ncurses.h mfst.h
 rng.o: rng.c rng.h
 	gcc -c -g -o rng.o rng.c
 
-block_size_test.o: block_size_test.c block_size_test.h lockfile.h mfst.h util.h
+block_size_test.o: block_size_test.c block_size_test.h lockfile.h mfst.h ncurses.h rng.h util.h
 	gcc -c -g -o block_size_test.o block_size_test.c
