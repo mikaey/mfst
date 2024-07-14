@@ -807,9 +807,9 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
     return 0;
 }
 
-void lseek_error_during_size_probe() {
+void lseek_error_during_size_probe(int errnum) {
     char msg[128];
-    snprintf(msg, sizeof(msg), "probe_device_size(): lseek() returned an error: %s", strerror(errno));
+    snprintf(msg, sizeof(msg), "probe_device_size(): lseek() returned an error: %s", strerror(errnum));
     log_log(msg);
     log_log("probe_device_size(): Aborting device size test");
 
@@ -823,9 +823,9 @@ void lseek_error_during_size_probe() {
     }, 1);
 }
 
-void write_error_during_size_probe() {
+void write_error_during_size_probe(int errnum) {
     char msg[128];
-    snprintf(msg, sizeof(msg), "probe_device_size(): write() returned an error: %s", strerror(errno));
+    snprintf(msg, sizeof(msg), "probe_device_size(): write() returned an error: %s", strerror(errnum));
     log_log(msg);
     log_log("probe_device_size(): Aborting device size test");
 
@@ -839,10 +839,10 @@ void write_error_during_size_probe() {
     }, 1);
 }
 
-void memory_error_during_size_probe() {
+void memory_error_during_size_probe(int errnum) {
     char msg[128];
 
-    snprintf(msg, sizeof(msg), "probe_device_size(): valloc() returned an error: %s", strerror(errno));
+    snprintf(msg, sizeof(msg), "probe_device_size(): valloc() returned an error: %s", strerror(errnum));
     log_log(msg);
     log_log("probe_device_size(): Aborting device size test");
 
@@ -861,6 +861,7 @@ void memory_error_during_size_probe() {
 uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_size) {
     // Start out by writing to 9 different places on the card to minimize the
     // chances that the card is interspersed with good blocks.
+    int errnum;
     char *buf, *readbuf, keep_searching, str[256];
     unsigned int random_seed, i, bytes_left, ret;
     uint64_t initial_sectors[9];
@@ -875,16 +876,22 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
 
     buf = valloc(buf_size);
     if(!buf) {
+        errnum = errno;
         erase_and_delete_window(window);
-        memory_error_during_size_probe();
+
+        memory_error_during_size_probe(errnum);
+
         return 0;
     }
 
     readbuf = valloc(buf_size);
     if(!readbuf) {
+        errnum = errno;
         erase_and_delete_window(window);
         free(buf);
-        memory_error_during_size_probe();
+
+        memory_error_during_size_probe(errnum);
+
         return 0;
     }
 
@@ -925,19 +932,21 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     for(i = num_slices; i > 0; i--) {
         handle_key_inputs(window);
         if(lseek(fd, initial_sectors[i - 1] * device_stats.sector_size, SEEK_SET) == -1) {
+            errnum = errno;
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            lseek_error_during_size_probe();
+            lseek_error_during_size_probe(errnum);
 
             return 0;            
         }
 
         if(write_data_to_device(fd, buf + ((i - 1) * slice_size), slice_size, optimal_block_size)) {
+            errnum = errno;
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            write_error_during_size_probe();
+            write_error_during_size_probe(errnum);
 
             return 0;
         }
@@ -954,10 +963,11 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     for(i = 0; i < num_slices; i++) {
         handle_key_inputs(window);
         if(lseek(fd, initial_sectors[i] * device_stats.sector_size, SEEK_SET) == -1) {
+            errnum = errno;
+            erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            erase_and_delete_window(window);
-            lseek_error_during_size_probe();
+            lseek_error_during_size_probe(errnum);
 
             return 0;
         }
@@ -1062,10 +1072,11 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
         }
 
         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
+            errnum = errno;
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            lseek_error_during_size_probe();
+            lseek_error_during_size_probe(errnum);
 
             return 0;
         }
@@ -1073,19 +1084,21 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
         // Generate some more random data
         rng_fill_buffer(buf, slice_size * num_slices);
         if(write_data_to_device(fd, buf, slice_size * num_slices, optimal_block_size)) {
+            errnum = errno;
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            write_error_during_size_probe();
+            write_error_during_size_probe(errnum);
 
             return 0;
         }
 
         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
+            errnum = errno;
             erase_and_delete_window(window);
-            lseek_error_during_size_probe();
-
             multifree(2, buf, readbuf);
+
+            lseek_error_during_size_probe(errnum);
 
             return 0;
         }
@@ -1142,12 +1155,10 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     return low * device_stats.sector_size;
 }
 
-void lseek_error_during_speed_test() {
-    int local_errno;
+void lseek_error_during_speed_test(int errnum) {
     char msg[128];
 
-    local_errno = errno;
-    snprintf(msg, sizeof(msg), "probe_device_speeds(): lseek() returned an error: %s", strerror(local_errno));
+    snprintf(msg, sizeof(msg), "probe_device_speeds(): lseek() returned an error: %s", strerror(errnum));
     log_log(msg);
     log_log("probe_device_size(): Aborting speed tests");
 
@@ -1159,17 +1170,15 @@ void lseek_error_during_speed_test() {
         "Unfortunately, this means that we won't be able to complete the speed tests.",
         "",
         "Here's the error we got while trying to move around the device:",
-        strerror(local_errno),
+        strerror(errnum),
         NULL
     }, 1);
 }
 
-void io_error_during_speed_test(char write) {
-    int local_errno;
+void io_error_during_speed_test(char write, int errnum) {
     char msg[128];
 
-    local_errno = errno;
-    snprintf(msg, sizeof(msg), "probe_device_speeds(): %s() returned an error: %s", write ? "write" : "read", strerror(local_errno));
+    snprintf(msg, sizeof(msg), "probe_device_speeds(): %s() returned an error: %s", write ? "write" : "read", strerror(errnum));
     log_log(msg);
     log_log("probe_device_size(): Aborting speed tests");
 
@@ -1182,7 +1191,7 @@ void io_error_during_speed_test(char write) {
         "Unfortunately, this means that we won't be able to complete the speed tests.",
         "",
         "Here's the error we got:",
-        strerror(local_errno),
+        strerror(errnum),
         NULL
     }, 1);
 }
@@ -1250,9 +1259,12 @@ int probe_device_speeds(int fd) {
 
             if(!rd) {
                 if(lseek(fd, 0, SEEK_SET) == -1) {
+                    local_errno = errno;
                     erase_and_delete_window(window);
-                    lseek_error_during_speed_test();
                     free(buf);
+
+                    lseek_error_during_speed_test(local_errno);
+
                     return -1;
                 }
             }
@@ -1273,7 +1285,7 @@ int probe_device_speeds(int fd) {
                             (device_stats.num_sectors - (4096 / device_stats.sector_size)) & 0xFFFFFFFFFFFFFFF8;
                         if(lseek(fd, cur * device_stats.sector_size, SEEK_SET) == -1) {
                             erase_and_delete_window(window);
-                            lseek_error_during_speed_test();
+                            lseek_error_during_speed_test(local_errno);
                             free(buf);
                             unlock_lockfile();
                             return -1;
@@ -1287,10 +1299,13 @@ int probe_device_speeds(int fd) {
                     }
 
                     if(ret == -1) {
+                        local_errno = errno;
                         erase_and_delete_window(window);
-                        io_error_during_speed_test(wr);
                         free(buf);
                         unlock_lockfile();
+
+                        io_error_during_speed_test(wr, local_errno);
+
                         return -1;
                     }
 
