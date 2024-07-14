@@ -1,5 +1,5 @@
 mfst: mfst.o base64.o state.o device.o util.o crc32.o lockfile.o ncurses.o block_size_test.o rng.o
-	gcc -g -o mfst mfst.o state.o base64.o util.o device.o crc32.o lockfile.o ncurses.o block_size_test.o rng.o -lncurses -ludev -ljson-c
+	gcc -g -o mfst mfst.o state.o base64.o util.o device.o crc32.o lockfile.o ncurses.o block_size_test.o rng.o -lncurses -ludev -ljson-c -luuid
 
 	gcc -c -g -o mfst.o mfst.c
 mfst.o: mfst.c base64.h block_size_test.h crc32.h device.h lockfile.h mfst.h ncurses.h rng.h state.h util.h
