@@ -10,7 +10,7 @@ base64.o: base64.c base64.h
 state.o: state.c state.h mfst.h
 	gcc -c -g -o state.o state.c
 
-device.o: device.c device.h
+device.o: device.c device.h mfst.h
 	gcc -c -g -o device.o device.c
 
 util.o: util.c util.h
