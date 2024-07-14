@@ -5,6 +5,7 @@
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
 #include <stdio.h>
 #include <sys/stat.h>
+#include <uuid/uuid.h>
 
 
 // Size of the beginning-of-device and middle-of-device buffers
@@ -331,6 +332,18 @@
  */
 void log_log(char *msg);
 
+/**
+ * Decodes the UUID embedded in the sector data (specified by data) and places
+ * it into buffer specified by uuid_buffer.
+ *
+ * @param data         A pointer to a buffer containing sector data that the
+ *                     UUID will be extracted from.  The buffer is expected to
+ *                     be at least 290 bytes long.
+ * @param uuid_buffer  A pointer to a buffer where the extracted UUID will be
+ *                     placed.
+ */
+void get_embedded_device_uuid(char *data, char *uuid_buffer);
+
 typedef struct _program_options_type {
     char *stats_file;
     char *log_file;
@@ -367,6 +380,7 @@ typedef struct _device_stats_type {
     int max_request_size;
     dev_t device_num;
     FakeFlashEnum is_fake_flash;
+    uuid_t device_uuid;
 } device_stats_type;
 
 extern device_stats_type device_stats;

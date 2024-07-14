@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <uuid/uuid.h>
 
 #include "block_size_test.h"
 #include "crc32.h"
@@ -2255,27 +2256,41 @@ void reset_sector_map_partial(uint64_t start, uint64_t end) {
 uint64_t get_sector_number_xor_val(char *data) {
     unsigned char *udata = (unsigned char *) data;
     return
-        (((uint64_t)udata[16]) << 56) |
-        (((uint64_t)udata[32]) << 48) |
-        (((uint64_t)udata[48]) << 40) |
-        (((uint64_t)udata[64]) << 32) |
-        (((uint64_t)udata[80]) << 24) |
-        (((uint64_t)udata[96]) << 16) |
-        (((uint64_t)udata[112]) << 8) |
-        ((uint64_t)udata[128]);
+        (((uint64_t)udata[32]) << 56) |
+        (((uint64_t)udata[48]) << 48) |
+        (((uint64_t)udata[64]) << 40) |
+        (((uint64_t)udata[80]) << 32) |
+        (((uint64_t)udata[96]) << 24) |
+        (((uint64_t)udata[112]) << 16) |
+        (((uint64_t)udata[128]) << 8) |
+        ((uint64_t)udata[144]);
 }
 
 int64_t get_round_num_xor_val(char *data) {
     unsigned char *udata = (unsigned char *) data;
     return
-        (((uint64_t)udata[17]) << 56) |
-        (((uint64_t)udata[33]) << 48) |
-        (((uint64_t)udata[49]) << 40) |
-        (((uint64_t)udata[65]) << 32) |
-        (((uint64_t)udata[81]) << 24) |
-        (((uint64_t)udata[97]) << 16) |
-        (((uint64_t)udata[113]) << 8) |
-        ((uint64_t)udata[129]);
+        (((uint64_t)udata[33]) << 56) |
+        (((uint64_t)udata[49]) << 48) |
+        (((uint64_t)udata[65]) << 40) |
+        (((uint64_t)udata[81]) << 32) |
+        (((uint64_t)udata[97]) << 24) |
+        (((uint64_t)udata[113]) << 16) |
+        (((uint64_t)udata[129]) << 8) |
+        ((uint64_t)udata[145]);
+}
+
+void embed_device_uuid(char *data) {
+    int i;
+    for(i = 0; i < 16; i++) {
+        data[i + 16] = device_stats.device_uuid[i] ^ data[(i * 16) + 34];
+    }
+}
+
+void get_embedded_device_uuid(char *data, char *uuid_buffer) {
+    int i;
+    for(i = 0; i < 16; i++) {
+        uuid_buffer[i] = data[i + 16] ^ data[(i * 16) + 34];
+    }
 }
 
 void embed_sector_and_round_number(char *data, uint64_t sector_number, int64_t round_num) {
@@ -3023,6 +3038,18 @@ int main(int argc, char **argv) {
         device_stats.num_bad_sectors = 0;
     }
 
+    // Generate a new UUID for the device if one isn't already assigned.
+    if(!memcmp(zero_buf, device_stats.device_uuid, sizeof(uuid_t))) {
+        uuid_generate(device_stats.device_uuid);
+        if(state_file_status == LOAD_STATE_SUCCESS) {
+            log_log("No device UUID present in state file -- assigning a new UUID to the device");
+        }
+
+        uuid_unparse(device_stats.device_uuid, device_uuid_str);
+        snprintf(str, sizeof(str), "Assigning UUID %s to device", device_uuid_str);
+        log_log(str);
+    }
+
     // Start filling up the device
     device_stats.bytes_since_last_status_update = 0;
     memset(&stress_test_stats, 0, sizeof(stress_test_stats));
@@ -3115,6 +3142,7 @@ int main(int argc, char **argv) {
                 // various types of errors:
                 //  - Sector number (to detect address decoding errors),
                 //  - Round number (to detect failed writes),
+                //  - Device UUID (to detect cross-device reads)
                 //  - CRC32 (to detect bit flip errors)
                 //
                 // The first two are going to have a lot of zeros in them all
@@ -3123,6 +3151,7 @@ int main(int argc, char **argv) {
                 // whether to invert these values or not.
                 for(i = 0; i < cur_sectors_per_block; i++) {
                     embed_sector_and_round_number(&(buf[i * device_stats.sector_size]), cur_sector + i, num_rounds);
+                    embed_device_uuid(&(buf[i * device_stats.sector_size]));
                     embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
                 }
 
@@ -3294,6 +3323,7 @@ int main(int argc, char **argv) {
                 // Re-embed the sector number and CRC32 into the expected data
                 for(i = 0; i < cur_sectors_per_block; i++) {
                     embed_sector_and_round_number(&(buf[i * device_stats.sector_size]), cur_sector + i, num_rounds);
+                    embed_device_uuid(&(buf[i * device_stats.sector_size]));
                     embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
                 }
 

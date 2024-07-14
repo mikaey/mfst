@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <uuid/uuid.h>
 
 #include "base64.h"
 #include "mfst.h"
@@ -33,6 +34,7 @@ int save_state() {
     struct json_object *root, *parent, *obj;
     char *filename;
     char *sector_map, *b64str;
+    char device_uuid[37];
     size_t i, j;
 
     // If no state file was specified, do nothing
@@ -44,6 +46,15 @@ int save_state() {
     // value is if something goes wrong...so I'm just assuming that nothing
     // *can* go wrong.  Totally a good idea, right?
     root = json_object_new_object();
+
+    // Write the device UUID out to the file
+    uuid_unparse(device_stats.device_uuid, device_uuid);
+    obj = json_object_new_string(device_uuid);
+    if(json_object_object_add(root, "device_uuid", obj)) {
+        json_object_put(obj);
+        json_object_put(root);
+        return -1;
+    }
 
     // Put together the device_geomery object
     parent = json_object_new_object();
@@ -374,8 +385,10 @@ int load_state() {
     int i;
     char *buffer;
     size_t detected_size, sector_size, k, l;
+    char *uuid_str = NULL;
 
     // A bunch of constants for the JSON pointers to our JSON object
+    const char *device_uuid_ptr = "/device_uuid";
     const char *reported_size_ptr = "/device_geometry/reported_size";
     const char *detected_size_ptr = "/device_geometry/detected_size";
     const char *sector_size_ptr = "/device_geometry/sector_size";
@@ -400,6 +413,7 @@ int load_state() {
     const char *tfpfr_ptr = "/state/twenty_five_percent_failure_round";
 
     const char *all_props[] = {
+        device_uuid_ptr,
         reported_size_ptr,
         detected_size_ptr,
         sector_size_ptr,
@@ -426,6 +440,7 @@ int load_state() {
     };
 
     const json_type prop_types[] = {
+        json_type_string,  // device_uuid_ptr
         json_type_int,     // reported_size_ptr
         json_type_int,     // detected_size_ptr
         json_type_int,     // sector_size_ptr
@@ -451,6 +466,7 @@ int load_state() {
     };
 
     const int required_props[] = {
+        0, // device_uuid_ptr
         1, // reported_size_ptr
         1, // detected_size_ptr
         1, // sector_size_ptr
@@ -476,6 +492,7 @@ int load_state() {
     };
 
     const int base64_props[] = {
+        0, // device_uuid_ptr
         0, // reported_size_ptr
         0, // detected_size_ptr
         0, // sector_size_ptr
@@ -501,6 +518,7 @@ int load_state() {
     };
 
     char *buffers[] = {
+        NULL, // device_uuid_ptr
         NULL, // reported_size_ptr
         NULL, // detected_size_ptr
         NULL, // sector_size_ptr
@@ -526,6 +544,7 @@ int load_state() {
     };
 
     size_t buffer_lens[] = {
+        0, // device_uuid_ptr,
         0, // reported_size_ptr
         0, // detected_size_ptr
         0, // sector_size_ptr
@@ -551,6 +570,7 @@ int load_state() {
     };
 
     void *destinations[] = {
+        &uuid_str,
         &device_stats.reported_size_bytes,
         &device_stats.detected_size_bytes,
         &device_stats.sector_size,
@@ -691,6 +711,7 @@ int load_state() {
 
     // Make sure our Base64-encoded strings are the correct length.
     size_t expected_lens[] = {
+        -1,                  // device_uuid_ptr
         -1,                  // reported_size_ptr
         -1,                  // detected_size_ptr
         -1,                  // sector_size_ptr
@@ -782,6 +803,12 @@ int load_state() {
                 *((char **) destinations[i]) = buffers[i];
             }
         }
+    }
+
+    // Parse the device UUID
+    if(uuid_str) {
+        uuid_parse(uuid_str, device_stats.device_uuid);
+        free(uuid_str);
     }
 
     json_object_put(root);
