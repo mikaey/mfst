@@ -10,7 +10,7 @@
 static int lockfile_fd = -1;
 
 int open_lockfile(char *filename) {
-    if((lockfile_fd = open(program_options.lock_file, O_WRONLY | O_CREAT)) == -1) {
+    if((lockfile_fd = open(program_options.lock_file, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)) == -1) {
         return errno;
     }
 
