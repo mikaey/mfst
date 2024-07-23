@@ -27,6 +27,9 @@
 #include "state.h"
 #include "util.h"
 
+// Number of slices per round of endurance testing
+#define NUM_SLICES 16
+
 // Since we use these strings so frequently, these are just here to save space
 const char *WARNING_TITLE = "WARNING";
 const char *ERROR_TITLE = "ERROR";
@@ -1456,7 +1459,7 @@ int *random_list() {
  * @returns The sector on which the slice starts.
 */
 uint64_t get_slice_start(int slice_num) {
-    return (device_stats.num_sectors / 16) * slice_num;
+    return (device_stats.num_sectors / NUM_SLICES) * slice_num;
 }
 
 void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_completed, int abort_reason) {
@@ -2958,7 +2961,7 @@ int main(int argc, char **argv) {
 
         read_order = random_list();
 
-        for(cur_slice = 0, restart_slice = 0; cur_slice < 16; cur_slice++, restart_slice = 0) {
+        for(cur_slice = 0, restart_slice = 0; cur_slice < NUM_SLICES; cur_slice++, restart_slice = 0) {
             rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
@@ -2969,7 +2972,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
 
-            if(read_order[cur_slice] == 15) {
+            if(read_order[cur_slice] == (NUM_SLICES - 1)) {
                 last_sector = device_stats.num_sectors;
             } else {
                 last_sector = get_slice_start(read_order[cur_slice] + 1);
@@ -3141,8 +3144,8 @@ int main(int argc, char **argv) {
             mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Reading ");
         }
 
-        for(cur_slice = 0; cur_slice < 16; cur_slice++) {
-            rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
+        for(cur_slice = 0; cur_slice < NUM_SLICES; cur_slice++) {
+            rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * NUM_SLICES));
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
