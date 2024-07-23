@@ -1671,7 +1671,7 @@ int parse_command_line_arguments(int argc, char **argv) {
                 print_help(argv[0]);
                 return -1;
             case 'i':
-                program_options.stats_interval = atoi(optarg); break;
+                program_options.stats_interval = strtol(optarg, NULL, 10); break;
             case 'l':
                 if(program_options.log_file) {
                     printf("Only one log file option may be specified on the command line.\n");
