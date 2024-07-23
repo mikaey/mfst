@@ -1571,7 +1571,8 @@ void print_help(char *program_name) {
     printf("Usage: %s [ [-s | --stats-file filename] [-i | --stats-interval seconds]\n", program_name);
     printf("       [-l | --log-file filename] [-b | --probe-for-block-size]\n");
     printf("       [-n | --no-curses] [--this-will-destroy-my-device]\n");
-    printf("       [-f | --lockfile filename] device-name | [-h | --help]]\n\n");
+    printf("       [-f | --lockfile filename] [-e | --sectors count]\n");
+    printf("       device_name | [-h | --help]]\n\n");
     printf("  device_name                    The device to test (for example, /dev/sdc).\n");
     printf("  -s|--stats-file filename       Write stats periodically to the given file.  If\n");
     printf("                                 the given file already exists, stats are\n");
