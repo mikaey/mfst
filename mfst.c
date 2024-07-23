@@ -351,9 +351,7 @@ void redraw_sector_map() {
         sector_display.sectors_in_last_block = sector_display.sectors_per_block;
     }
 
-    if(sector_display.sectors_per_block) {
-        mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
-    }
+    mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
 
     if(!sector_display.sector_map) {
         return;
