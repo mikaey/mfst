@@ -1831,7 +1831,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
     ret = read(*fd, buf, count);
 
     if(ret == -1) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "retriable_read(): write error during sector %lu", position / device_stats.sector_size);
+        snprintf(msg_buffer, sizeof(msg_buffer), "retriable_read(): read error during sector %lu", position / device_stats.sector_size);
     }
 
     while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
