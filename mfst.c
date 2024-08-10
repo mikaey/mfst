@@ -1717,7 +1717,7 @@ int parse_command_line_arguments(int argc, char **argv) {
     return 0;
 }
 
-off_t retriable_lseek(int *fd, off_t position, uint64_t num_rounds_completed, int *device_was_disconnected) {
+off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
     int iret;
@@ -1736,7 +1736,7 @@ off_t retriable_lseek(int *fd, off_t position, uint64_t num_rounds_completed, in
         // beginning-of-device and middle-of-device are accurate -- and if the device
         // is disconnected and reconnected (or reset), the device name might change --
         // so only try to recover if we've completed at least one round.
-        if(num_rounds_completed > 0) {
+        if(num_rounds > 0) {
             if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
                 *device_was_disconnected = 1;
                 if(*fd != -1) {
@@ -1815,7 +1815,7 @@ off_t retriable_lseek(int *fd, off_t position, uint64_t num_rounds_completed, in
     return ret;
 }
 
-int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint64_t num_rounds_completed) {
+int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
     int op_retry_count;
     int reset_retry_count;
     int device_was_disconnected;
@@ -1863,7 +1863,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint6
                 program_options.device_name = new_device_name;
                 device_stats.device_num = new_device_num;
 
-                if(retriable_lseek(fd, position, num_rounds_completed, &device_was_disconnected) == -1) {
+                if(retriable_lseek(fd, position, &device_was_disconnected) == -1) {
                     log_log("retriable_read(): Failed to seek to previous position after re-opening device");
                     erase_and_delete_window(window);
                     redraw_screen();
@@ -1902,7 +1902,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint6
                         op_retry_count = 0;
                         reset_retry_count++;
 
-                        if(retriable_lseek(fd, position, num_rounds_completed, &device_was_disconnected) == -1) {
+                        if(retriable_lseek(fd, position, &device_was_disconnected) == -1) {
                             log_log("retriable_read(): Failed to seek to previous position after re-opening device");
                             erase_and_delete_window(window);
                             redraw_screen();
@@ -1927,7 +1927,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint6
     return ret;
 }
 
-int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint64_t num_rounds_completed, int *device_was_disconnected) {
+int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
     int iret;
@@ -1952,7 +1952,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint
         // beginning-of-device and middle-of-device are accurate -- and if the device
         // is disconnected and reconnected (or reset), the device name might change --
         // so only try to recover if we've completed at least one round.
-        if(num_rounds_completed > 0) {
+        if(num_rounds > 0) {
             if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
                 if(*fd != -1) {
                     close(*fd);
@@ -1981,7 +1981,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint
                     program_options.device_name = new_device_name;
                     device_stats.device_num = new_device_num;
 
-                    if(retriable_lseek(fd, position, num_rounds_completed, device_was_disconnected) == -1) {
+                    if(retriable_lseek(fd, position, device_was_disconnected) == -1) {
                         log_log("retriable_write(): Failed to seek to previous position after re-opening device");
                         erase_and_delete_window(window);
                         redraw_screen();
@@ -2022,7 +2022,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint
                             op_retry_count = 0;
                             reset_retry_count++;
 
-                            if(retriable_lseek(fd, position, num_rounds_completed, device_was_disconnected) == -1) {
+                            if(retriable_lseek(fd, position, device_was_disconnected) == -1) {
                                 log_log("retriable_write(): Failed to seek to previous position after re-opening device");
                                 erase_and_delete_window(window);
                                 redraw_screen();
@@ -2948,7 +2948,7 @@ int main(int argc, char **argv) {
         for(cur_slice = 0, restart_slice = 0; cur_slice < NUM_SLICES; cur_slice++, restart_slice = 0) {
             rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
 
-            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
+            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                     ABORT_REASON_SEEK_ERROR);
 
@@ -2997,7 +2997,7 @@ int main(int argc, char **argv) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
 
-                    if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), num_rounds, &device_was_disconnected)) == -1) {
+                    if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), &device_was_disconnected)) == -1) {
                         if(fd == -1) {
                             print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                                 ABORT_REASON_WRITE_ERROR);
@@ -3020,7 +3020,7 @@ int main(int argc, char **argv) {
 
                             bytes_left_to_write -= device_stats.sector_size;
 
-                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), num_rounds, &device_was_disconnected)) == -1) {
+                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
                                 // Give up if we can't seek
                                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
                                 cleanup();
@@ -3131,7 +3131,7 @@ int main(int argc, char **argv) {
         for(cur_slice = 0; cur_slice < NUM_SLICES; cur_slice++) {
             rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * NUM_SLICES));
 
-            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, num_rounds, &device_was_disconnected) == -1) {
+            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
                 cleanup();
                 return 0;
@@ -3169,7 +3169,7 @@ int main(int argc, char **argv) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
 
-                    if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), num_rounds)) == -1) {
+                    if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR))) == -1) {
                         if(fd == -1) {
                             print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                                 ABORT_REASON_READ_ERROR);
@@ -3186,7 +3186,7 @@ int main(int argc, char **argv) {
                             mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
                             bytes_left_to_write -= device_stats.sector_size;
 
-                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), num_rounds, &device_was_disconnected)) == -1) {
+                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
                                 // Give up if we can't seek
                                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
                                 cleanup();
