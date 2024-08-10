@@ -61,6 +61,9 @@ char bod_buffer[BOD_MOD_BUFFER_SIZE];
 char mod_buffer[BOD_MOD_BUFFER_SIZE];
 int64_t num_rounds;
 
+// Scratch buffer for messages; we're allocating it statically so that we can
+// still log messages in case of memory shortages
+static char msg_buffer[256];
 
 /**
  * Log the given string to the log file, if the log file is open.  If curses
@@ -486,7 +489,6 @@ void print_class_marking_qualifications() {
 }
 
 void redraw_screen() {
-    char str[128];
     char rate[13];
     int j;
 
@@ -511,8 +513,8 @@ void redraw_screen() {
 
         // Draw the device name
         if(program_options.device_name) {
-            snprintf(str, 23, "%s ", program_options.device_name);
-            mvaddstr(DEVICE_NAME_DISPLAY_Y, DEVICE_NAME_DISPLAY_X, str);
+            snprintf(msg_buffer, 23, "%s ", program_options.device_name);
+            mvaddstr(DEVICE_NAME_DISPLAY_Y, DEVICE_NAME_DISPLAY_X, msg_buffer);
         }
 
         // Draw the color key for the right side of the screen
@@ -556,8 +558,8 @@ void redraw_screen() {
         mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed/this round"  );
 
         if(num_rounds != -1) {
-            j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
-            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), str);
+            j = snprintf(msg_buffer, sizeof(msg_buffer), " Round %'lu ", num_rounds + 1);
+            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), msg_buffer);
         }
 
         if(is_writing == 1) {
@@ -568,14 +570,14 @@ void redraw_screen() {
 
         // Draw the reported size of the device if it's been determined
         if(device_stats.reported_size_bytes) {
-            snprintf(str, 26, "%'lu bytes", device_stats.reported_size_bytes);
-            mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%-25s", str);
+            snprintf(msg_buffer, 26, "%'lu bytes", device_stats.reported_size_bytes);
+            mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%-25s", msg_buffer);
         }
 
         // Draw the detected size of the device if it's been determined
         if(device_stats.detected_size_bytes) {
-            snprintf(str, 26, "%'lu bytes", device_stats.detected_size_bytes);
-            mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%-25s", device_stats.detected_size_bytes ? str : "");
+            snprintf(msg_buffer, 26, "%'lu bytes", device_stats.detected_size_bytes);
+            mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%-25s", device_stats.detected_size_bytes ? msg_buffer : "");
         }
 
         if(device_stats.is_fake_flash == FAKE_FLASH_YES) {
@@ -593,11 +595,11 @@ void redraw_screen() {
         }
 
         if(device_speeds.sequential_read_speed) {
-            mvaddstr(SEQUENTIAL_READ_SPEED_DISPLAY_Y, SEQUENTIAL_READ_SPEED_DISPLAY_X, format_rate(device_speeds.sequential_read_speed, str, 31));
+            mvaddstr(SEQUENTIAL_READ_SPEED_DISPLAY_Y, SEQUENTIAL_READ_SPEED_DISPLAY_X, format_rate(device_speeds.sequential_read_speed, msg_buffer, 31));
         }
 
         if(device_speeds.sequential_write_speed) {
-            mvaddstr(SEQUENTIAL_WRITE_SPEED_DISPLAY_Y, SEQUENTIAL_WRITE_SPEED_DISPLAY_X, format_rate(device_speeds.sequential_write_speed, str, 31));
+            mvaddstr(SEQUENTIAL_WRITE_SPEED_DISPLAY_Y, SEQUENTIAL_WRITE_SPEED_DISPLAY_X, format_rate(device_speeds.sequential_write_speed, msg_buffer, 31));
         }
 
         if(device_speeds.random_read_iops) {
@@ -701,7 +703,6 @@ double profile_random_number_generator() {
     int64_t total_random_numbers_generated = 0;
     time_t diff;
     char rate_str[16];
-    char message[128];
     WINDOW *window;
 
     log_log("profile_random_number_generator(): Profiling random number generator");
@@ -724,9 +725,9 @@ double profile_random_number_generator() {
     total_random_numbers_generated *= sizeof(int);
 
     log_log("profile_random_number_generator(): Finished profiling random number generator.");
-    snprintf(message, sizeof(message), "profile_random_number_generator(): System can generate %s of random data.",
+    snprintf(msg_buffer, sizeof(msg_buffer), "profile_random_number_generator(): System can generate %s of random data.",
         format_rate(((double) total_random_numbers_generated) / (((double) timediff(start_time, end_time)) / 1000000.0), rate_str, sizeof(rate_str)));
-    log_log(message);
+    log_log(msg_buffer);
 
     if(window) {
         erase_and_delete_window(window);
@@ -735,10 +736,10 @@ double profile_random_number_generator() {
     if(total_random_numbers_generated < 471859200) {
         // Display a warning message to the user
         log_log("profile_random_number_generator(): WARNING: System is too slow to test all possible speed qualifications.  Speed test results may be inaccurate.");
-        i = snprintf(message, sizeof(message), "Your system is only able to generate %s of random data.",
+        i = snprintf(msg_buffer, sizeof(msg_buffer), "Your system is only able to generate %s of random data.",
             format_rate(((double) total_random_numbers_generated) / (((double) diff) / 1000000.0), rate_str, sizeof(rate_str)));
         message_window(stdscr, WARNING_TITLE, (char *[]) {
-            message,
+            msg_buffer,
             "The device may appear to be slower than it actually is, and speed test results",
             "may be inaccurate.",
             NULL
@@ -809,9 +810,8 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
 }
 
 void lseek_error_during_size_probe(int errnum) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "probe_device_size(): lseek() returned an error: %s", strerror(errnum));
-    log_log(msg);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+    log_log(msg_buffer);
     log_log("probe_device_size(): Aborting device size test");
 
     message_window(stdscr, WARNING_TITLE, (char *[]) {
@@ -825,9 +825,8 @@ void lseek_error_during_size_probe(int errnum) {
 }
 
 void write_error_during_size_probe(int errnum) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "probe_device_size(): write() returned an error: %s", strerror(errnum));
-    log_log(msg);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): write() returned an error: %s", strerror(errnum));
+    log_log(msg_buffer);
     log_log("probe_device_size(): Aborting device size test");
 
     message_window(stdscr, WARNING_TITLE, (char *[]) {
@@ -841,10 +840,8 @@ void write_error_during_size_probe(int errnum) {
 }
 
 void memory_error_during_size_probe(int errnum) {
-    char msg[128];
-
-    snprintf(msg, sizeof(msg), "probe_device_size(): valloc() returned an error: %s", strerror(errnum));
-    log_log(msg);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): valloc() returned an error: %s", strerror(errnum));
+    log_log(msg_buffer);
     log_log("probe_device_size(): Aborting device size test");
 
     message_window(stdscr, WARNING_TITLE, (char *[]) {
@@ -863,7 +860,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     // Start out by writing to 9 different places on the card to minimize the
     // chances that the card is interspersed with good blocks.
     int errnum;
-    char *buf, *readbuf, keep_searching, str[256];
+    char *buf, *readbuf, keep_searching;
     unsigned int random_seed, i, bytes_left, ret;
     uint64_t initial_sectors[9];
     uint64_t low, high, cur, size, j;
@@ -1016,8 +1013,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                     } else {
                         erase_and_delete_window(window);
 
-                        snprintf(str, sizeof(str), "probe_device_size(): Device is %'lu bytes in size", j);
-                        log_log(str);
+                        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", j);
+                        log_log(msg_buffer);
 
                         return j;
                     }
@@ -1026,8 +1023,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                         erase_and_delete_window(window);
                         multifree(2, buf, readbuf);
 
-                        snprintf(str, sizeof(str), "probe_device_size(): Device is %'lu bytes in size", (initial_sectors[i] * device_stats.sector_size) + j);
-                        log_log(str);
+                        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", (initial_sectors[i] * device_stats.sector_size) + j);
+                        log_log(msg_buffer);
 
                         return (initial_sectors[i] * device_stats.sector_size) + j;
                     } else {
@@ -1047,8 +1044,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
         erase_and_delete_window(window);
         multifree(2, buf, readbuf);
 
-        snprintf(str, sizeof(str), "probe_device_size(): Device is %'lu bytes in size", num_sectors * device_stats.sector_size);
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", num_sectors * device_stats.sector_size);
+        log_log(msg_buffer);
 
         return num_sectors * device_stats.sector_size;
     }
@@ -1127,9 +1124,9 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                         erase_and_delete_window(window);
                         multifree(2, buf, readbuf);
 
-                        snprintf(str, sizeof(str), "probe_device_size(): Device is %'lu bytes in size",
+                        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size",
                             (cur * device_stats.sector_size) + (i * slice_size) + j);
-                        log_log(str);
+                        log_log(msg_buffer);
 
                         return (cur * device_stats.sector_size) + (i * slice_size) + j;
                     } else {
@@ -1150,17 +1147,15 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     erase_and_delete_window(window);
     multifree(2, buf, readbuf);
 
-    snprintf(str, sizeof(str), "probe_device_size(): Device is %'lu bytes in size", low * device_stats.sector_size);
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", low * device_stats.sector_size);
+    log_log(msg_buffer);
 
     return low * device_stats.sector_size;
 }
 
 void lseek_error_during_speed_test(int errnum) {
-    char msg[128];
-
-    snprintf(msg, sizeof(msg), "probe_device_speeds(): lseek() returned an error: %s", strerror(errnum));
-    log_log(msg);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): lseek() returned an error: %s", strerror(errnum));
+    log_log(msg_buffer);
     log_log("probe_device_size(): Aborting speed tests");
 
     message_window(stdscr, WARNING_TITLE, (char *[]) {
@@ -1177,15 +1172,13 @@ void lseek_error_during_speed_test(int errnum) {
 }
 
 void io_error_during_speed_test(char write, int errnum) {
-    char msg[128];
-
-    snprintf(msg, sizeof(msg), "probe_device_speeds(): %s() returned an error: %s", write ? "write" : "read", strerror(errnum));
-    log_log(msg);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): %s() returned an error: %s", write ? "write" : "read", strerror(errnum));
+    log_log(msg_buffer);
     log_log("probe_device_size(): Aborting speed tests");
 
-    snprintf(msg, sizeof(msg), "We got an error while trying to %s the device.  It could be that the device", write ? "write to" : "read from");
+    snprintf(msg_buffer, sizeof(msg_buffer), "We got an error while trying to %s the device.  It could be that the device", write ? "write to" : "read from");
     message_window(stdscr, WARNING_TITLE, (char *[]) {
-        msg,
+        msg_buffer,
         "was removed, experienced an error and disconnected itself, or set itself to",
         "read-only.",
         "",
@@ -1203,7 +1196,7 @@ int probe_device_speeds(int fd) {
     int64_t ret;
     struct timeval start_time, cur_time;
     double secs, prev_secs;
-    char rate[15], str[192];
+    char rate[15];
     int local_errno;
     WINDOW *window;
 
@@ -1214,8 +1207,8 @@ int probe_device_speeds(int fd) {
 
     if(lock_lockfile()) {
         local_errno = errno;
-        snprintf(str, sizeof(str), "probe_device_size(): lockf() returned an error: %s", strerror(local_errno));
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): lockf() returned an error: %s", strerror(local_errno));
+        log_log(msg_buffer);
         log_log("probe_device_size(): Skipping optimal write block size test.");
 
         message_window(stdscr, ERROR_TITLE, (char *[]) {
@@ -1233,8 +1226,8 @@ int probe_device_speeds(int fd) {
 
     if(!(buf = valloc(device_stats.block_size < 4096 ? 4096 : device_stats.block_size))) {
         local_errno = errno;
-        snprintf(str, sizeof(str), "probe_device_speeds(): valloc() returned an error: %s", strerror(local_errno));
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): valloc() returned an error: %s", strerror(local_errno));
+        log_log(msg_buffer);
         log_log("probe_device_speeds(): Aborting speed tests");
 
         message_window(stdscr, WARNING_TITLE, (char *[]) {
@@ -1325,15 +1318,15 @@ int probe_device_speeds(int fd) {
                         // Update the on-screen display every half second
                         if((secs - prev_secs) >= 0.5) {
                             if(rd) {
-                                snprintf(str, sizeof(str), "%0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs, rate, sizeof(rate)));
+                                snprintf(msg_buffer, sizeof(msg_buffer), "%0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs, rate, sizeof(rate)));
                                 mvprintw(
                                     wr ? RANDOM_WRITE_SPEED_DISPLAY_Y : RANDOM_READ_SPEED_DISPLAY_Y,
-                                    wr ? RANDOM_WRITE_SPEED_DISPLAY_X : RANDOM_READ_SPEED_DISPLAY_X, "%-28s", str);
+                                    wr ? RANDOM_WRITE_SPEED_DISPLAY_X : RANDOM_READ_SPEED_DISPLAY_X, "%-28s", msg_buffer);
                             } else {
-                                snprintf(str, sizeof(str), "%s", format_rate(ctr / secs, rate, sizeof(rate)));
+                                snprintf(msg_buffer, sizeof(msg_buffer), "%s", format_rate(ctr / secs, rate, sizeof(rate)));
                                 mvprintw(
                                     wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_Y : SEQUENTIAL_READ_SPEED_DISPLAY_Y,
-                                    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_X : SEQUENTIAL_READ_SPEED_DISPLAY_X, "%-28s", str);
+                                    wr ? SEQUENTIAL_WRITE_SPEED_DISPLAY_X : SEQUENTIAL_READ_SPEED_DISPLAY_X, "%-28s", msg_buffer);
                             }
 
                             refresh();
@@ -1344,27 +1337,27 @@ int probe_device_speeds(int fd) {
             }
 
             if(rd && wr) {
-                snprintf(str, sizeof(str), "probe_device_speeds(): Random write speed    : %0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs,
+                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Random write speed    : %0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs,
                     rate, sizeof(rate)));
-                log_log(str);
+                log_log(msg_buffer);
 
                 device_speeds.random_write_iops = ctr / secs;
             } else if(rd && !wr) {
-                snprintf(str, sizeof(str), "probe_device_speeds(): Random read speed     : %0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs,
+                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Random read speed     : %0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs,
                     rate, sizeof(rate)));
-                log_log(str);
+                log_log(msg_buffer);
 
                 device_speeds.random_read_iops = ctr / secs;
             } else if(!rd && wr) {
-                snprintf(str, sizeof(str), "probe_device_speeds(): Sequential write speed: %s", format_rate(ctr / secs, rate, sizeof(rate)));
-                log_log(str);
+                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Sequential write speed: %s", format_rate(ctr / secs, rate, sizeof(rate)));
+                log_log(msg_buffer);
 
                 device_speeds.sequential_write_speed = ctr / secs;
                 speed_qualifications_shown = 1;
                 print_class_marking_qualifications();
             } else {
-                snprintf(str, sizeof(str), "probe_device_speeds(): Sequential read speed : %s", format_rate(ctr / secs, rate, sizeof(rate)));
-                log_log(str);
+                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Sequential read speed : %s", format_rate(ctr / secs, rate, sizeof(rate)));
+                log_log(msg_buffer);
 
                 device_speeds.sequential_read_speed = ctr / secs;
             }
@@ -1383,37 +1376,37 @@ int probe_device_speeds(int fd) {
     // repaint them on the display, and we don't want to print them to the log
     // a second time if they've already been printed out.
     log_log("probe_device_speeds(): Speed test results:");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 2 marking : %s", device_speeds.sequential_write_speed >= 2000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 4 marking : %s", device_speeds.sequential_write_speed >= 4000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 6 marking : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for Class 10 marking: %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 2 marking : %s", device_speeds.sequential_write_speed >= 2000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 4 marking : %s", device_speeds.sequential_write_speed >= 4000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 6 marking : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 10 marking: %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
+    log_log(msg_buffer);
     log_log("probe_device_speeds():");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for U1 marking      : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for U3 marking      : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for U1 marking      : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for U3 marking      : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
+    log_log(msg_buffer);
     log_log("probe_device_speeds():");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V6 marking      : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V10 marking     : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V30 marking     : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V60 marking     : %s", device_speeds.sequential_write_speed >= 60000000 ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for V90 marking     : %s", device_speeds.sequential_write_speed >= 90000000 ? "Yes" : "No");
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V6 marking      : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V10 marking     : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V30 marking     : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V60 marking     : %s", device_speeds.sequential_write_speed >= 60000000 ? "Yes" : "No");
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V90 marking     : %s", device_speeds.sequential_write_speed >= 90000000 ? "Yes" : "No");
+    log_log(msg_buffer);
     log_log("probe_device_speeds():");
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for A1 marking      : %s",
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for A1 marking      : %s",
         (device_speeds.sequential_write_speed >= 10485760 && device_speeds.random_read_iops >= 1500 && device_speeds.random_write_iops >= 500) ? "Yes" : "No");
-    log_log(str);
-    snprintf(str, sizeof(str), "probe_device_speeds():   Qualifies for A2 marking      : %s",
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for A2 marking      : %s",
         (device_speeds.sequential_write_speed >= 10485760 && device_speeds.random_read_iops >= 4000 && device_speeds.random_write_iops >= 2000) ? "Yes" : "No");
-    log_log(str);
+    log_log(msg_buffer);
     log_log("probe_device_speeds():");
 
     free(buf);
@@ -1461,27 +1454,26 @@ uint64_t get_slice_start(int slice_num) {
 }
 
 void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_completed, int abort_reason) {
-    char buf[256];
     char messages[7][384];
     char *out_messages[7];
     int i;
 
     switch(abort_reason) {
     case ABORT_REASON_READ_ERROR:
-        strncpy(buf, "read error", sizeof(buf)); break;
+        strncpy(msg_buffer, "read error", sizeof(msg_buffer)); break;
     case ABORT_REASON_WRITE_ERROR:
-        strncpy(buf, "write error", sizeof(buf)); break;
+        strncpy(msg_buffer, "write error", sizeof(msg_buffer)); break;
     case ABORT_REASON_SEEK_ERROR:
-        strncpy(buf, "seek error", sizeof(buf)); break;
+        strncpy(msg_buffer, "seek error", sizeof(msg_buffer)); break;
     case ABORT_REASON_FIFTY_PERCENT_FAILURE:
-        strncpy(buf, "50% of sectors have failed", sizeof(buf)); break;
+        strncpy(msg_buffer, "50% of sectors have failed", sizeof(msg_buffer)); break;
     case ABORT_REASON_DEVICE_REMOVED:
-        strncpy(buf, "device went away", sizeof(buf)); break;
+        strncpy(msg_buffer, "device went away", sizeof(msg_buffer)); break;
     default:
-        strncpy(buf, "unknown", sizeof(buf)); break;
+        strncpy(msg_buffer, "unknown", sizeof(msg_buffer)); break;
     }
 
-    snprintf(messages[0], sizeof(messages[0]), "Reason for aborting test             : %s", buf);
+    snprintf(messages[0], sizeof(messages[0]), "Reason for aborting test             : %s", msg_buffer);
     out_messages[0] = messages[0];
     snprintf(messages[1], sizeof(messages[1]), "Number of read/write cycles completed: %'lu", rounds_completed);
     out_messages[1] = messages[1];
@@ -1518,8 +1510,8 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
 
     log_log("Stress test complete");
     for(i = 0; out_messages[i]; i++) {
-        snprintf(buf, sizeof(buf), "  %s", out_messages[i]);
-        log_log(buf);
+        snprintf(msg_buffer, sizeof(msg_buffer), "  %s", out_messages[i]);
+        log_log(msg_buffer);
     }
 
     message_window(stdscr, "Test Complete", out_messages, 1);
@@ -1830,7 +1822,6 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint6
     int iret;
     int64_t ret;
     WINDOW *window;
-    char str[256];
     char *new_device_name;
     dev_t new_device_num;
 
@@ -1840,7 +1831,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position, uint6
     ret = read(*fd, buf, count);
 
     if(ret == -1) {
-        snprintf(str, sizeof(str), "retriable_read(): write error during sector %lu", position / device_stats.sector_size);
+        snprintf(msg_buffer, sizeof(msg_buffer), "retriable_read(): write error during sector %lu", position / device_stats.sector_size);
     }
 
     while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
@@ -1942,7 +1933,6 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint
     int iret;
     int64_t ret;
     WINDOW *window;
-    char str[256];
     char *new_device_name;
     dev_t new_device_num;
 
@@ -1953,8 +1943,8 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint
     ret = write(*fd, buf, count);
 
     if(ret == -1) {
-        snprintf(str, sizeof(str), "retriable_write(): write error during sector %lu", position / device_stats.sector_size);
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "retriable_write(): write error during sector %lu", position / device_stats.sector_size);
+        log_log(msg_buffer);
     }
 
     while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
@@ -2061,10 +2051,8 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, uint
 }
 
 void malloc_error(int errnum) {
-    char str[256];
-
-    snprintf(str, sizeof(str), "malloc() failed: %s", strerror(errnum));
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "malloc() failed: %s", strerror(errnum));
+    log_log(msg_buffer);
 
     message_window(stdscr, ERROR_TITLE, (char *[]) {
         "Failed to allocate memory for one of the buffers we need to do the stress test.",
@@ -2077,10 +2065,8 @@ void malloc_error(int errnum) {
 }
 
 void valloc_error(int errnum) {
-    char str[256];
-
-    snprintf(str, sizeof(str), "valloc() failed: %s", strerror(errnum));
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "valloc() failed: %s", strerror(errnum));
+    log_log(msg_buffer);
 
     message_window(stdscr, ERROR_TITLE, (char *[]) {
         "Failed to allocate memory for one of the buffers we need to do the stress test.",
@@ -2173,7 +2159,6 @@ uint32_t get_embedded_crc32c(char *data, int sector_size) {
 }
 
 void log_sector_contents(uint64_t sector_num, int sector_size, char *expected_data, char *actual_data) {
-    char str[256];
     char tmp[16];
     int i;
 
@@ -2181,14 +2166,14 @@ void log_sector_contents(uint64_t sector_num, int sector_size, char *expected_da
 
     for(i = 0; i < sector_size; i++) {
         if(!(i % 16)) {
-            snprintf(str, sizeof(str), "    %016lx:", (sector_num * sector_size) + i);
+            snprintf(msg_buffer, sizeof(msg_buffer), "    %016lx:", (sector_num * sector_size) + i);
         }
 
         snprintf(tmp, sizeof(tmp), " %02x%s", expected_data[i] & 0xff, (i % 16) == 7 ? "    " : "");
-        strcat(str, tmp);
+        strcat(msg_buffer, tmp);
 
         if((i % 16) == 15 || i == (sector_size - 1)) {
-            log_log(str);
+            log_log(msg_buffer);
         }
     }
 
@@ -2197,14 +2182,14 @@ void log_sector_contents(uint64_t sector_num, int sector_size, char *expected_da
 
     for(i = 0; i < sector_size; i++) {
         if(!(i % 16)) {
-            snprintf(str, sizeof(str), "    %016lx:", (sector_num * sector_size) + i);
+            snprintf(msg_buffer, sizeof(msg_buffer), "    %016lx:", (sector_num * sector_size) + i);
         }
 
         snprintf(tmp, sizeof(tmp), " %02x%s", actual_data[i] & 0xff, (i % 16) == 7 ? "    " : "");
-        strcat(str, tmp);
+        strcat(msg_buffer, tmp);
 
         if((i % 16) == 15 || i == (sector_size - 1)) {
-            log_log(str);
+            log_log(msg_buffer);
         }
     }
 
@@ -2228,7 +2213,7 @@ int main(int argc, char **argv) {
     int reset_retry_count; // How many times have we tried to reset the device?
     int device_was_disconnected;
     int iret;
-    char str[192], tmp[16];
+    char tmp[16];
     struct timeval stats_cur_time;
     WINDOW *window;
     dev_t new_device_num;
@@ -2401,8 +2386,8 @@ int main(int argc, char **argv) {
             log_log("program run for long enough, it WILL completely destroy the device and render it"),
             log_log("completely unusable.  Do not use it on any storage devices that you care about.");
             log_log("");
-            snprintf(str, sizeof(str), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
+            log_log(msg_buffer);
             log_log("not OK with this, you have 15 seconds to hit Ctrl+C before we start doing anything.");
             
             window = message_window(stdscr, WARNING_TITLE, (char *[]) {
@@ -2411,7 +2396,7 @@ int main(int argc, char **argv) {
                 "for long enough, it WILL completely destroy the device and render it completely",
                 "unusable.  Do not use it on any storage devices that you care about.",
                 "",
-                str,
+                msg_buffer,
                 "not OK with this, you have 15 seconds to hit Ctrl+C.",
                 NULL
             }, 0);
@@ -2436,9 +2421,9 @@ int main(int argc, char **argv) {
         if(!file_handles.log_file) {
             if(!program_options.no_curses) {
                 local_errno = errno;
-                snprintf(str, sizeof(str), "Unable to open log file %s:", program_options.log_file);
+                snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open log file %s:", program_options.log_file);
                 message_window(stdscr, ERROR_TITLE, (char *[]) {
-                    str,
+                    msg_buffer,
                     strerror(local_errno),
                     NULL
                 }, 1);
@@ -2455,8 +2440,8 @@ int main(int argc, char **argv) {
     log_log("Program version " VERSION " started.");
 
     if(state_file_status == LOAD_STATE_SUCCESS) {
-        snprintf(str, sizeof(str), "Resuming from state file %s", program_options.state_file);
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "Resuming from state file %s", program_options.state_file);
+        log_log(msg_buffer);
     }
 
     if(iret = open_lockfile(program_options.lock_file)) {
@@ -2468,12 +2453,12 @@ int main(int argc, char **argv) {
         file_handles.stats_file = fopen(program_options.stats_file, "a");
         if(!file_handles.stats_file) {
             local_errno = errno;
-            snprintf(str, sizeof(str), "Unable to open stats file %s: %s", program_options.stats_file, strerror(local_errno));
+            snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open stats file %s: %s", program_options.stats_file, strerror(local_errno));
             log_log(str);
 
-            snprintf(str, sizeof(str), "Unable to open stats file %s:", program_options.stats_file);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open stats file %s:", program_options.stats_file);
             message_window(stdscr, ERROR_TITLE, (char *[]) {
-                str,
+                msg_buffer,
                 strerror(local_errno),
                 NULL
             }, 1);
@@ -2482,8 +2467,8 @@ int main(int argc, char **argv) {
             return -1;
         }
 
-        snprintf(str, sizeof(str), "Logging stats to %s", program_options.stats_file);
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "Logging stats to %s", program_options.stats_file);
+        log_log(msg_buffer);
 
         // Write the CSV headers out to the file
         fprintf(file_handles.stats_file,
@@ -2494,8 +2479,8 @@ int main(int argc, char **argv) {
     // Does the system have a working gettimeofday?
     if(gettimeofday(&speed_start_time, NULL) == -1) {
         local_errno = errno;
-        snprintf(str, sizeof(str), "Got the following error while calling gettimeofday(): %s", strerror(local_errno));
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling gettimeofday(): %s", strerror(local_errno));
+        log_log(msg_buffer);
         log_log("Unable to test -- your system doesn't have a working gettimeofday() call.");
         message_window(stdscr, ERROR_TITLE, (char *[]) {
             "We won't be able to test this device because your system doesn't have a working",
@@ -2594,13 +2579,13 @@ int main(int argc, char **argv) {
 
         if(fstat(fd, &fs)) {
             local_errno = errno;
-            snprintf(str, sizeof(str), "Got the following error while calling fstat() on %s: %s\n", program_options.device_name, strerror(local_errno));
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling fstat() on %s: %s\n", program_options.device_name, strerror(local_errno));
+            log_log(msg_buffer);
             log_log("Unable to test -- unable to pull stats on the device.");
 
-            snprintf(str, sizeof(str), "We won't be able to test %s because we weren't able to pull stats", program_options.device_name);
+            snprintf(msg_buffer, sizeof(msg_buffer), "We won't be able to test %s because we weren't able to pull stats", program_options.device_name);
             message_window(stdscr, ERROR_TITLE, (char *[]) {
-                str,
+                msg_buffer,
                 "it.  The device may have been removed, or you may not have permissions to open",
                 "it.  (Make sure you're running this program with sudo.)",
                 "",
@@ -2630,13 +2615,13 @@ int main(int argc, char **argv) {
 
         if(stat(program_options.device_name, &fs)) {
             local_errno = errno;
-            snprintf(str, sizeof(str), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(local_errno));
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(local_errno));
+            log_log(msg_buffer);
             log_log("Unable to test -- unable to pull stats on the device.");
-            snprintf(str, sizeof(str), "%s.  The device may have been removed, or you may not have permissions to", program_options.device_name);
+            snprintf(msg_buffer, sizeof(msg_buffer), "%s.  The device may have been removed, or you may not have permissions to", program_options.device_name);
             message_window(stdscr, ERROR_TITLE, (char *[]) {
                 "We won't be able to test this device because we were unable to pull stats on",
-                str,
+                msg_buffer,
                 "open it.  (Make sure you're running this program with sudo.)",
                 "",
                 "This is the error we got while trying to call stat():",
@@ -2649,11 +2634,11 @@ int main(int argc, char **argv) {
         }
 
         if(!S_ISBLK(fs.st_mode)) {
-            snprintf(str, sizeof(str), "Unable to test -- %s is not a block device", program_options.device_name);
-            log_log(str);
-            snprintf(str, sizeof(str), "We won't be able to test with %s because it isn't a block device.  You must", program_options.device_name);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Unable to test -- %s is not a block device", program_options.device_name);
+            log_log(msg_buffer);
+            snprintf(msg_buffer, sizeof(msg_buffer), "We won't be able to test with %s because it isn't a block device.  You must", program_options.device_name);
             message_window(stdscr, ERROR_TITLE, (char *[]) {
-                str,
+                msg_buffer,
                 "provide a block device to test with.",
                 NULL
             }, 1);
@@ -2664,13 +2649,13 @@ int main(int argc, char **argv) {
 
         if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
             local_errno = errno;
-            snprintf(str, sizeof(str), "Failed to open %s: %s", program_options.device_name, strerror(local_errno));
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Failed to open %s: %s", program_options.device_name, strerror(local_errno));
+            log_log(msg_buffer);
             log_log("Unable to test -- couldn't open device.  Make sure you run this program as sudo.");
 
-            snprintf(str, sizeof(str), "We won't be able to test %s because we couldn't open the device.", program_options.device_name);
+            snprintf(msg_buffer, sizeof(msg_buffer), "We won't be able to test %s because we couldn't open the device.", program_options.device_name);
             message_window(stdscr, ERROR_TITLE, (char *[]) {
-                str,
+                msg_buffer,
                 "The device might have gone away, or you might not have permissions to open it.",
                 "(Make sure you run this program as sudo.)",
                 "",
@@ -2687,12 +2672,12 @@ int main(int argc, char **argv) {
     if(ioctl(fd, BLKGETSIZE64, &device_stats.reported_size_bytes) || ioctl(fd, BLKSSZGET, &device_stats.sector_size) ||
         ioctl(fd, BLKSECTGET, &max_sectors_per_request) || ioctl(fd, BLKPBSZGET, &device_stats.physical_sector_size)) {
         local_errno = errno;
-        snprintf(str, sizeof(str), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(local_errno));
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(local_errno));
+        log_log(msg_buffer);
 
-        snprintf(str, sizeof(str), "We won't be able to test %s because we couldn't pull stats on the device.", program_options.device_name);
+        snprintf(msg_buffer, sizeof(msg_buffer), "We won't be able to test %s because we couldn't pull stats on the device.", program_options.device_name);
         message_window(stdscr, ERROR_TITLE, (char *[]) {
-            str,
+            msg_buffer,
             "",
             "Here's the error we got while trying to open the device:",
             strerror(local_errno),
@@ -2713,18 +2698,18 @@ int main(int argc, char **argv) {
     device_stats.max_request_size = device_stats.sector_size * max_sectors_per_request;
 
     log_log("Device info reported by kernel:");
-    snprintf(str, sizeof(str), "  Reported size            : %'lu bytes", device_stats.reported_size_bytes);
-    log_log(str);
-    snprintf(str, sizeof(str), "  Sector size (logical)    : %'u bytes", device_stats.sector_size);
-    log_log(str);
-    snprintf(str, sizeof(str), "  Sector size (physical)   : %'u bytes", device_stats.physical_sector_size);
-    log_log(str);
-    snprintf(str, sizeof(str), "  Total sectors (derived)  : %'lu", device_stats.num_sectors);
-    log_log(str);
-    snprintf(str, sizeof(str), "  Preferred block size     : %'lu bytes", fs.st_blksize);
-    log_log(str);
-    snprintf(str, sizeof(str), "  Max sectors per request  : %'hu", max_sectors_per_request);
-    log_log(str);
+    snprintf(msg_buffer, sizeof(msg_buffer), "  Reported size            : %'lu bytes", device_stats.reported_size_bytes);
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "  Sector size (logical)    : %'u bytes", device_stats.sector_size);
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "  Sector size (physical)   : %'u bytes", device_stats.physical_sector_size);
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "  Total sectors (derived)  : %'lu", device_stats.num_sectors);
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "  Preferred block size     : %'lu bytes", fs.st_blksize);
+    log_log(msg_buffer);
+    snprintf(msg_buffer, sizeof(msg_buffer), "  Max sectors per request  : %'hu", max_sectors_per_request);
+    log_log(msg_buffer);
     mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.reported_size_bytes);
     refresh();
 
@@ -2736,8 +2721,8 @@ int main(int argc, char **argv) {
 
             if((device_stats.block_size = probe_for_optimal_block_size(fd)) <= 0) {
                 device_stats.block_size = device_stats.sector_size * max_sectors_per_request;
-                snprintf(str, sizeof(str), "Unable to probe for optimal block size.  Falling back to derived block size (%'d bytes).", device_stats.block_size);
-                log_log(str);
+                snprintf(msg_buffer, sizeof(msg_buffer), "Unable to probe for optimal block size.  Falling back to derived block size (%'d bytes).", device_stats.block_size);
+                log_log(msg_buffer);
             }
         } else {
             device_stats.block_size = device_stats.sector_size * max_sectors_per_request;
@@ -2751,8 +2736,8 @@ int main(int argc, char **argv) {
             device_stats.num_sectors = program_options.force_sectors;
             device_stats.detected_size_bytes = program_options.force_sectors * device_stats.sector_size;
 
-            snprintf(str, sizeof(str), "Assuming that the device is %'lu bytes long (as specified on the command line).", device_stats.detected_size_bytes);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Assuming that the device is %'lu bytes long (as specified on the command line).", device_stats.detected_size_bytes);
+            log_log(msg_buffer);
 
             if(device_stats.detected_size_bytes == device_stats.reported_size_bytes) {
                 device_stats.is_fake_flash = FAKE_FLASH_NO;
@@ -2775,8 +2760,8 @@ int main(int argc, char **argv) {
                 }
             }
         } else if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, device_stats.block_size))) {
-            snprintf(str, sizeof(str), "Assuming that the kernel-reported device size (%'lu bytes) is correct.", device_stats.reported_size_bytes);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Assuming that the kernel-reported device size (%'lu bytes) is correct.", device_stats.reported_size_bytes);
+            log_log(msg_buffer);
 
             middle_of_device = device_stats.reported_size_bytes / 2;
 
@@ -2899,8 +2884,8 @@ int main(int argc, char **argv) {
         }
 
         uuid_unparse(device_stats.device_uuid, device_uuid_str);
-        snprintf(str, sizeof(str), "Assigning UUID %s to device", device_uuid_str);
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "Assigning UUID %s to device", device_uuid_str);
+        log_log(msg_buffer);
     }
 
     // Start filling up the device
@@ -2922,8 +2907,8 @@ int main(int argc, char **argv) {
         stress_test_stats.previous_bytes_read = state_data.bytes_read;
         stress_test_stats.previous_bad_sectors = device_stats.num_bad_sectors;
 
-        snprintf(str, sizeof(str), "Resuming stress test from round %'lu", num_rounds + 1);
-        log_log(str);
+        snprintf(msg_buffer, sizeof(msg_buffer), "Resuming stress test from round %'lu", num_rounds + 1);
+        log_log(msg_buffer);
     }
 
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
@@ -2948,8 +2933,8 @@ int main(int argc, char **argv) {
 
         is_writing = 1;
         if(!program_options.no_curses) {
-            j = snprintf(str, sizeof(str), " Round %'lu ", num_rounds + 1);
-            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), str);
+            j = snprintf(msg_buffer, sizeof(msg_buffer), " Round %'lu ", num_rounds + 1);
+            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), msg_buffer);
             mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Writing ");
         }
 
@@ -3022,8 +3007,8 @@ int main(int argc, char **argv) {
                         } else {
                             // Mark this sector bad and skip over it
                             if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
-                                snprintf(str, sizeof(str), "Write error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                log_log(str);
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Write error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                log_log(msg_buffer);
                             }
 
                             mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
@@ -3194,8 +3179,8 @@ int main(int argc, char **argv) {
                         } else {
                             // Mark this sector as bad and skip over it
                             if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
-                                snprintf(str, sizeof(str), "Read error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                log_log(str);
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Read error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                log_log(msg_buffer);
                             }
 
                             mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
@@ -3229,28 +3214,28 @@ int main(int argc, char **argv) {
                         num_bad_sectors_this_round++;
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             if(!memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all 0x00's); marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(str);
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (sector read as all 0x00's); marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(msg_buffer);
                             } else if(!memcmp(compare_buf + j, ff_buf, device_stats.sector_size)) {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (sector read as all 0xff's); marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(str);
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (sector read as all 0xff's); marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(msg_buffer);
                             } else if(calculate_crc32c(0, compare_buf + j, device_stats.sector_size)) {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (CRC32 mismatch; embedded value was 0x%08x, calculated value was 0x%08x), marking sector bad",
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (CRC32 mismatch; embedded value was 0x%08x, calculated value was 0x%08x), marking sector bad",
                                          cur_sector + (j / device_stats.sector_size), get_embedded_crc32c(compare_buf + j, device_stats.sector_size),
                                          calculate_crc32c(0, compare_buf + j, device_stats.sector_size - sizeof(uint32_t)));
-                                log_log(str);
+                                log_log(msg_buffer);
                                 log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
                             } else if(decode_embedded_round_number(compare_buf + j) != num_rounds) {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (write failure detected; data read back was from round %ld, sector %lu), marking sector bad",
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (write failure detected; data read back was from round %ld, sector %lu), marking sector bad",
                                          cur_sector + (j / device_stats.sector_size), decode_embedded_round_number(compare_buf + j) + 1, decode_embedded_sector_number(compare_buf + j));
-                                log_log(str);
+                                log_log(msg_buffer);
                             } else if(decode_embedded_sector_number(compare_buf + j) != (cur_sector + (j / device_stats.sector_size))) {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu (address decoding error detected, data was originally from sector %lu), marking sector bad",
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (address decoding error detected, data was originally from sector %lu), marking sector bad",
                                          cur_sector + (j / device_stats.sector_size), decode_embedded_sector_number(compare_buf + j));
-                                log_log(str);
+                                log_log(msg_buffer);
                             } else {
-                                snprintf(str, sizeof(str), "Data verification failure in sector %lu; marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(str);
+                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu; marking sector bad", cur_sector + (j / device_stats.sector_size));
+                                log_log(msg_buffer);
                                 log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
                             }
 
@@ -3278,27 +3263,27 @@ int main(int argc, char **argv) {
         read_order = NULL;
 
         if(!num_bad_sectors && !device_stats.num_bad_sectors) {
-            snprintf(str, sizeof(str), "Round %'lu complete, no bad sectors detected", num_rounds + 1);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Round %'lu complete, no bad sectors detected", num_rounds + 1);
+            log_log(msg_buffer);
         } else /* if(!num_bad_sectors && device_stats.num_bad_sectors) */ {
-            snprintf(str, sizeof(str), "Round %'lu complete; round stats:", num_rounds + 1);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "Round %'lu complete; round stats:", num_rounds + 1);
+            log_log(msg_buffer);
 
-            snprintf(str, sizeof(str), "  Sectors that failed verification this round: %'lu", num_bad_sectors_this_round);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "  Sectors that failed verification this round: %'lu", num_bad_sectors_this_round);
+            log_log(msg_buffer);
 
-            snprintf(str, sizeof(str), "  New bad sectors this round: %'lu", num_bad_sectors);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "  New bad sectors this round: %'lu", num_bad_sectors);
+            log_log(msg_buffer);
 
-            snprintf(str, sizeof(str), "  Sectors marked bad in a previous round that passed verification this round: %'lu", num_good_sectors_this_round);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "  Sectors marked bad in a previous round that passed verification this round: %'lu", num_good_sectors_this_round);
+            log_log(msg_buffer);
 
-            snprintf(str, sizeof(str), "  Total bad sectors: %'lu (%0.2f%% of total)", device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
-            log_log(str);
+            snprintf(msg_buffer, sizeof(msg_buffer), "  Total bad sectors: %'lu (%0.2f%% of total)", device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
+            log_log(msg_buffer);
         } /* else {
-            snprintf(str, sizeof(str), "Round %'lu complete, %'lu new bad sectors found this round; %'lu bad sectors discovered total (%0.2f%% of total)",
+            snprintf(msg_buffer, sizeof(msg_buffer), "Round %'lu complete, %'lu new bad sectors found this round; %'lu bad sectors discovered total (%0.2f%% of total)",
                 num_rounds + 1, num_bad_sectors, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
-            log_log(str);
+            log_log(msg_buffer);
 
             if(state_data.first_failure_round == -1) {
                 state_data.first_failure_round = num_rounds;
