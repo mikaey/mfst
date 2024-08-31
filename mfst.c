@@ -8,6 +8,7 @@
 #include <getopt.h>
 #include <linux/fs.h>
 #include <locale.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
@@ -25,6 +26,7 @@
 #include "ncurses.h"
 #include "rng.h"
 #include "state.h"
+#include "sql.h"
 #include "util.h"
 
 // Number of slices per round of endurance testing
@@ -59,7 +61,10 @@ device_stats_type device_stats;
 program_options_type program_options;
 char bod_buffer[BOD_MOD_BUFFER_SIZE];
 char mod_buffer[BOD_MOD_BUFFER_SIZE];
-int64_t num_rounds;
+volatile int64_t num_rounds;
+
+volatile main_thread_status_type main_thread_status;
+
 volatile int log_log_lock = 0;
 
 // Scratch buffer for messages; we're allocating it statically so that we can
@@ -491,6 +496,25 @@ void print_class_marking_qualifications() {
     }
 }
 
+void print_sql_status(SqlThreadStatusType status) {
+    mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "               ");
+
+    switch(status) {
+    case SQL_THREAD_NOT_CONNECTED:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Not connected"); break;
+    case SQL_THREAD_CONNECTING:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Connecting"); break;
+    case SQL_THREAD_CONNECTED:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Connected"); break;
+    case SQL_THREAD_DISCONNECTED:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Disconnected"); break;
+    case SQL_THREAD_QUERY_EXECUTING:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Executing query"); break;
+    case SQL_THREAD_ERROR:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Error"); break;
+    }
+}
+
 void redraw_screen() {
     char rate[13];
     int j;
@@ -512,7 +536,15 @@ void redraw_screen() {
         mvaddstr(RANDOM_WRITE_SPEED_LABEL_Y    , RANDOM_WRITE_SPEED_LABEL_X    , "Random write    :");
         mvaddstr(DEVICE_NAME_LABEL_Y           , DEVICE_NAME_LABEL_X           , " Device: "        );
         mvaddstr(PERCENT_SECTORS_FAILED_LABEL_Y, PERCENT_SECTORS_FAILED_LABEL_X, "% sectors failed:");
+        if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
+            mvaddstr(SQL_STATUS_LABEL_Y        , SQL_STATUS_LABEL_X            , "SQL status:"      );
+        }
+
         attroff(A_BOLD);
+
+        if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
+            print_sql_status(sqlThreadStatus);
+        }
 
         // Draw the device name
         if(program_options.device_name) {
@@ -639,8 +671,11 @@ void redraw_screen() {
 void wait_for_file_lock(WINDOW **topwin) {
     WINDOW *window;
     FILE *memfile;
+    main_thread_status_type previous_status;
     
     if(is_lockfile_locked()) {
+        previous_status = main_thread_status;
+        main_thread_status = MAIN_THREAD_STATUS_PAUSED;
         log_log("Detected another copy of this program is running speed tests.  Suspending execution.");
         if(!program_options.no_curses) {
             if(topwin) {
@@ -673,6 +708,7 @@ void wait_for_file_lock(WINDOW **topwin) {
         }
 
         log_log("Other program is finished.  Resuming execution.");
+        main_thread_status = previous_status;
 
         // We're just going to redraw the whole thing, so we don't need to
         // worry about erasing it first
@@ -1567,7 +1603,9 @@ void print_help(char *program_name) {
     printf("       [-l | --log-file filename] [-b | --probe-for-block-size]\n");
     printf("       [-n | --no-curses] [--this-will-destroy-my-device]\n");
     printf("       [-f | --lockfile filename] [-e | --sectors count]\n");
-    printf("       device_name | [-h | --help]]\n\n");
+    printf("       [--dbhost hostname --dbuser username --dbpass password --dbname database\n");
+    printf("       [--dbport port] [--cardname name|--cardid id]] device-name |\n");
+    printf("       [-h | --help]]\n\n");
     printf("  device_name                    The device to test (for example, /dev/sdc).\n");
     printf("  -s|--stats-file filename       Write stats periodically to the given file.  If\n");
     printf("                                 the given file already exists, stats are\n");
@@ -1602,6 +1640,17 @@ void print_help(char *program_name) {
     printf("                                 state file.  Only use this option with\n");
     printf("                                 problematic devices and you are sure the device\n");
     printf("                                 you specify is the correct device.\n");
+    printf("  --dbhost hostname              Name of the MySQL host to connect to.\n");
+    printf("  --dbuser username              Username to use with the MySQL connection.\n");
+    printf("  --dbpass password              Password to use with the MySQL connection.\n");
+    printf("  --dbname database              Name of the database to use with the MySQL\n");
+    printf("                                 connection.\n");
+    printf("  --dbport port                  Port to use to connect to the MYSQL server.\n");
+    printf("                                 Default: 3306\n");
+    printf("  --cardname name                Name of the card to register in the database.\n");
+    printf("  --cardid id                    Force data to be logged to the database using\n");
+    printf("                                 the given card ID instead of auto-detecting or\n");
+    printf("                                 registering the card.\n");
     printf("  -h|--help                      Display this help message.\n\n");
 }
 
@@ -1640,6 +1689,13 @@ int parse_command_line_arguments(int argc, char **argv) {
         { "state-file"                 , required_argument, NULL, 't' },
         { "sectors"                    , required_argument, NULL, 'e' },
         { "force-device"               , required_argument, NULL, 3   },
+        { "dbhost"                     , required_argument, NULL, 4   },
+        { "dbuser"                     , required_argument, NULL, 5   },
+        { "dbpass"                     , required_argument, NULL, 6   },
+        { "dbname"                     , required_argument, NULL, 7   },
+        { "dbport"                     , required_argument, NULL, 8   },
+        { "cardid"                     , required_argument, NULL, 9   },
+        { "cardname"                   , required_argument, NULL, 10  },
         { 0                            , 0                , 0   , 0   }
     };
 
@@ -1658,6 +1714,25 @@ int parse_command_line_arguments(int argc, char **argv) {
                 program_options.dont_show_warning_message = 1; break;
             case 3:
                 assert(forced_device = strdup(optarg)); break;
+            case 4:
+                assert(program_options.db_host = strdup(optarg)); break;
+            case 5:
+                assert(program_options.db_user = strdup(optarg)); break;
+            case 6:
+                assert(program_options.db_pass = strdup(optarg));
+                // Mask the password so that it isn't visible to ps
+                for(c = 0; c < strlen(argv[optind - 1]); c++) {
+                    argv[optind - 1][c] = '*';
+                }
+                break;
+            case 7:
+                assert(program_options.db_name = strdup(optarg)); break;
+            case 8:
+                program_options.db_port = strtol(optarg, NULL, 10); break;
+            case 9:
+                program_options.card_id = strtoull(optarg, NULL, 10); break;
+            case 10:
+                assert(program_options.card_name = strdup(optarg)); break;
             case 'e':
                 program_options.force_sectors = strtoull(optarg, NULL, 10); break;
             case 'f':
@@ -1717,6 +1792,10 @@ int parse_command_line_arguments(int argc, char **argv) {
         program_options.lock_file = strdup("mfst.lock");
     }
 
+    if(!program_options.db_port) {
+        program_options.db_port = 3306;
+    }
+
     return 0;
 }
 
@@ -1728,11 +1807,13 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
     dev_t new_device_num;
     off_t ret;
     WINDOW *window;
+    main_thread_status_type previous_status;
 
     op_retry_count = 0;
     reset_retry_count = 0;
     *device_was_disconnected = 0;
     ret = lseek(*fd, position, SEEK_SET);
+    previous_status = main_thread_status;
 
     while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
         // If we haven't completed at least one round, then we can't be sure that the
@@ -1746,6 +1827,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
                     close(*fd);
                 }
 
+                main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                 log_log("retriable_lseek(): Device disconnected.  Waiting for device to be reconnected...");
                 window = message_window(stdscr, "Device Disconnected", (char *[]) {
                     "The device has been disconnected.  It may have done this on its own, or it may",
@@ -1771,6 +1853,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
                     device_stats.device_num = new_device_num;
                 }
 
+                main_thread_status = previous_status;
                 erase_and_delete_window(window);
                 redraw_screen();
             } else {
@@ -1790,6 +1873,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
                             NULL
                         }, 0);
 
+                        main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                         *fd = reset_device(*fd);
                         *device_was_disconnected = 1;
 
@@ -1802,6 +1886,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
                             reset_retry_count++;
                         }
 
+                        main_thread_status = previous_status;
                         erase_and_delete_window(window);
                         redraw_screen();
                     } else {
@@ -1827,9 +1912,11 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
     WINDOW *window;
     char *new_device_name;
     dev_t new_device_num;
+    main_thread_status_type previous_status;
 
     op_retry_count = 0;
     reset_retry_count = 0;
+    previous_status = main_thread_status;
 
     ret = read(*fd, buf, count);
 
@@ -1844,6 +1931,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
                 close(*fd);
             }
 
+            main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
             log_log("retriable_read(): Device disconnected.  Waiting for device to be reconnected...");
             window = message_window(stdscr, "Device Disconnected", (char *[]) {
                 "The device has been disconnected.  It may have done this on its own, or it may",
@@ -1877,6 +1965,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
                 log_log("retriable_read(): Failed to reconnect device!");
             }
 
+            main_thread_status = previous_status;
             erase_and_delete_window(window);
             redraw_screen();
         } else {
@@ -1896,6 +1985,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
                         NULL
                     }, 0);
 
+                    main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                     *fd = reset_device(*fd);
 
                     if(*fd == -1) {
@@ -1918,6 +2008,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
 
                     usleep(250000); // Give the device time to either reconnect and settle or for the device to fully disconnect
 
+                    main_thread_status = previous_status;
                     erase_and_delete_window(window);
                     redraw_screen();
                 } else {
@@ -1939,10 +2030,12 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
     WINDOW *window;
     char *new_device_name;
     dev_t new_device_num;
+    main_thread_status_type previous_status;
 
     op_retry_count = 0;
     reset_retry_count = 0;
     *device_was_disconnected = 0;
+    previous_status = main_thread_status;
 
     ret = write(*fd, buf, count);
 
@@ -1962,6 +2055,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
                     close(*fd);
                 }
 
+                main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                 log_log("retriable_write(): Device disconnected.  Waiting for device to be reconnected...");
                 window = message_window(stdscr, "Device Disconnected", (char *[]) {
                     "The device has been disconnected.  It may have done this on its own, or it may",
@@ -1997,6 +2091,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
 
                 *device_was_disconnected = 1;
 
+                main_thread_status = previous_status;
                 erase_and_delete_window(window);
                 redraw_screen();
             } else {
@@ -2016,6 +2111,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
                             NULL
                         }, 0);
 
+                        main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                         *fd = reset_device(*fd);
 
                         if(*fd == -1) {
@@ -2038,6 +2134,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
 
                         *device_was_disconnected = 1;
 
+                        main_thread_status = previous_status;
                         erase_and_delete_window(window);
                         redraw_screen();
                     } else {
@@ -2221,6 +2318,9 @@ int main(int argc, char **argv) {
     struct timeval stats_cur_time;
     WINDOW *window;
     dev_t new_device_num;
+    pthread_t sql_thread;
+    SqlThreadParamsType sql_thread_params;
+    SqlThreadStatusType prev_sql_thread_status = 0;
 
     // Set things up so that cleanup() works properly
     sector_display.sector_map = NULL;
@@ -2316,6 +2416,7 @@ int main(int argc, char **argv) {
     state_data.twenty_five_percent_failure_round = -1;
     device_stats.is_fake_flash = FAKE_FLASH_UNKNOWN;
     num_rounds = -1;
+    main_thread_status = MAIN_THREAD_STATUS_IDLE;
 
     if(parse_command_line_arguments(argc, argv)) {
         return -1;
@@ -2918,8 +3019,36 @@ int main(int argc, char **argv) {
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
     stats_cur_time = stress_test_stats.previous_update_time;
 
+    // Fire up the SQL thread
+    sqlThreadStatus = SQL_THREAD_NOT_CONNECTED;
+
+    if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
+        sql_thread_params.mysqlHost = program_options.db_host;
+        sql_thread_params.mysqlUsername = program_options.db_user;
+        sql_thread_params.mysqlPassword = program_options.db_pass;
+        sql_thread_params.mysqlPort = program_options.db_port;
+        sql_thread_params.mysqlDbName = program_options.db_name;
+        sql_thread_params.cardName = program_options.card_name;
+        sql_thread_params.cardId = program_options.card_id;
+
+        if(iret = pthread_create(&sql_thread, NULL, &sqlThreadMain, &sql_thread_params)) {
+            sqlThreadStatus = SQL_THREAD_ERROR;
+            snprintf(msg_buffer, sizeof(msg_buffer), "Error creating SQL thread: %s", strerror(iret));
+            log_log(msg_buffer);
+        }
+    }
+
+    print_sql_status(sqlThreadStatus);
+    prev_sql_thread_status = sqlThreadStatus;
+
     for(num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
+        main_thread_status = MAIN_THREAD_STATUS_WRITING;
         draw_percentage(); // Just in case it hasn't been drawn recently
+
+        if(prev_sql_thread_status != sqlThreadStatus) {
+            prev_sql_thread_status = sqlThreadStatus;
+            print_sql_status(sqlThreadStatus);
+        }
 
         if(num_rounds > 0) {
             if(save_state()) {
@@ -2933,6 +3062,11 @@ int main(int argc, char **argv) {
                 free(program_options.state_file);
                 program_options.state_file = NULL;
             }
+        }
+
+        if(prev_sql_thread_status != sqlThreadStatus) {
+            prev_sql_thread_status = sqlThreadStatus;
+            print_sql_status(sqlThreadStatus);
         }
 
         is_writing = 1;
@@ -2953,6 +3087,7 @@ int main(int argc, char **argv) {
             rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
+                main_thread_status = MAIN_THREAD_STATUS_ENDING;
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                     ABORT_REASON_SEEK_ERROR);
 
@@ -3003,6 +3138,7 @@ int main(int argc, char **argv) {
 
                     if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), &device_was_disconnected)) == -1) {
                         if(fd == -1) {
+                            main_thread_status = MAIN_THREAD_STATUS_ENDING;
                             print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                                 ABORT_REASON_WRITE_ERROR);
 
@@ -3026,6 +3162,7 @@ int main(int argc, char **argv) {
 
                             if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
                                 // Give up if we can't seek
+                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
                                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
                                 cleanup();
                                 return 0;
@@ -3124,6 +3261,7 @@ int main(int argc, char **argv) {
 
         free(read_order);
 
+        main_thread_status = MAIN_THREAD_STATUS_READING;
         read_order = random_list();
         device_stats.bytes_since_last_status_update = 0;
         sectors_read = 0;
@@ -3136,6 +3274,7 @@ int main(int argc, char **argv) {
             rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * NUM_SLICES));
 
             if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
+                main_thread_status = MAIN_THREAD_STATUS_ENDING;
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
                 cleanup();
                 return 0;
@@ -3148,6 +3287,10 @@ int main(int argc, char **argv) {
             }
 
             for(cur_sector = get_slice_start(read_order[cur_slice]); cur_sector < last_sector; cur_sector += cur_sectors_per_block) {
+                if(sqlThreadStatus != prev_sql_thread_status) {
+                    prev_sql_thread_status = sqlThreadStatus;
+                    print_sql_status(sqlThreadStatus);
+                }
 
                 // Use bytes_left_to_write to hold the bytes left to read
                 if((cur_sector + sectors_per_block) > last_sector) {
@@ -3175,6 +3318,7 @@ int main(int argc, char **argv) {
 
                     if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR))) == -1) {
                         if(fd == -1) {
+                            main_thread_status = MAIN_THREAD_STATUS_ENDING;
                             print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
                                 ABORT_REASON_READ_ERROR);
 
@@ -3192,6 +3336,7 @@ int main(int argc, char **argv) {
 
                             if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
                                 // Give up if we can't seek
+                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
                                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
                                 cleanup();
                                 return 0;
@@ -3304,6 +3449,7 @@ int main(int argc, char **argv) {
             } */
     }
 
+    main_thread_status = MAIN_THREAD_STATUS_ENDING;
     print_device_summary(num_rounds - 1, num_rounds, ABORT_REASON_FIFTY_PERCENT_FAILURE);
 
     cleanup();

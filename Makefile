@@ -1,7 +1,7 @@
-mfst: mfst.o base64.o state.o device.o util.o crc32.o lockfile.o ncurses.o block_size_test.o rng.o
-	gcc -g -o mfst mfst.o state.o base64.o util.o device.o crc32.o lockfile.o ncurses.o block_size_test.o rng.o -lncurses -ludev -ljson-c -luuid
+mfst: mfst.o base64.o state.o device.o util.o crc32.o sql.o lockfile.o ncurses.o block_size_test.o rng.o
+	gcc -g -o mfst mfst.o state.o base64.o util.o device.o crc32.o sql.o lockfile.o ncurses.o block_size_test.o rng.o -pthread -lncurses -ludev -ljson-c -lmariadb -luuid
 
-mfst.o: mfst.c base64.h block_size_test.h crc32.h device.h lockfile.h mfst.h ncurses.h rng.h state.h util.h
+mfst.o: mfst.c base64.h block_size_test.h crc32.h device.h lockfile.h mfst.h ncurses.h rng.h sql.h state.h util.h
        gcc -c -g -o mfst.o mfst.c
 
 base64.o: base64.c base64.h
@@ -18,6 +18,9 @@ util.o: util.c util.h
 
 crc32.o: crc32.c crc32.h
 	gcc -c -g -o crc32.o crc32.c
+
+sql.o: sql.c sql.h mfst.h
+	gcc -c -g -o sql.o sql.c
 
 lockfile.o: lockfile.c lockfile.h mfst.h
 	gcc -c -g -o lockfile.o lockfile.c

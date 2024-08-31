@@ -203,6 +203,14 @@
 #define SPEED_A2_LABEL_Y 23
 #define SPEED_A2_LABEL_X (COLS - 35)
 
+// The coordinates of the "SQL status:" label
+#define SQL_STATUS_LABEL_Y (LINES - 7)
+#define SQL_STATUS_LABEL_X 2
+
+// The coordinates of the SQL status
+#define SQL_STATUS_Y (LINES - 7)
+#define SQL_STATUS_X 14
+
 // The coordinates of the device name display
 #define DEVICE_NAME_DISPLAY_Y 0
 #define DEVICE_NAME_DISPLAY_X (strlen(PROGRAM_NAME) + 13)
@@ -356,6 +364,13 @@ typedef struct _program_options_type {
     char *lock_file;
     char *state_file;
     uint64_t force_sectors;
+    char *db_host;
+    char *db_user;
+    char *db_pass;
+    char *db_name;
+    int db_port;
+    char *card_name;
+    uint64_t card_id;
 } program_options_type;
 
 extern program_options_type program_options;
@@ -417,17 +432,28 @@ extern sector_display_type sector_display;
 extern char bod_buffer[BOD_MOD_BUFFER_SIZE];
 extern char mod_buffer[BOD_MOD_BUFFER_SIZE];
 
-extern int64_t num_rounds;
+extern volatile int64_t num_rounds;
 
 typedef struct _state_data_type {
-    uint64_t bytes_read;
-    uint64_t bytes_written;
+    volatile uint64_t bytes_read;
+    volatile uint64_t bytes_written;
     int64_t first_failure_round;
     int64_t ten_percent_failure_round;
     int64_t twenty_five_percent_failure_round;
 } state_data_type;
 
 extern state_data_type state_data;
+
+typedef enum {
+              MAIN_THREAD_STATUS_IDLE                = 0, // Status hasn't been set yet
+              MAIN_THREAD_STATUS_PAUSED              = 1, // Main thread is paused waiting for the lockfile
+              MAIN_THREAD_STATUS_WRITING             = 2, // Main thread is writing
+              MAIN_THREAD_STATUS_READING             = 3, // Main thread is reading
+              MAIN_THREAD_STATUS_DEVICE_DISCONNECTED = 4, // Device has disconnected and the main thread is waiting for it to be reconnected
+              MAIN_THREAD_STATUS_ENDING              = 5  // Main thread is showing the failure dialog and will end once the user acknowledges
+} main_thread_status_type;
+
+extern volatile main_thread_status_type main_thread_status;
 
 #endif // !defined(__MFST_H)
 
