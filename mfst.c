@@ -60,23 +60,24 @@ program_options_type program_options;
 char bod_buffer[BOD_MOD_BUFFER_SIZE];
 char mod_buffer[BOD_MOD_BUFFER_SIZE];
 int64_t num_rounds;
+volatile int log_log_lock = 0;
 
 // Scratch buffer for messages; we're allocating it statically so that we can
 // still log messages in case of memory shortages
 static char msg_buffer[256];
 
-/**
- * Log the given string to the log file, if the log file is open.  If curses
- * mode is turned off, also log the given string to stdout.  The time is
- * prepended to the message, and a newline is appended to the message.
- *
- * @param msg       The null-terminated string to write to the log file.
- */
 void log_log(char *msg) {
     time_t now = time(NULL);
     char *t = ctime(&now);
     // Get rid of the newline on the end of the time
     t[strlen(t) - 1] = 0;
+
+    while(log_log_lock) {
+        usleep(1);
+    }
+
+    log_log_lock = 1;
+
     if(file_handles.log_file) {
         fprintf(file_handles.log_file, "[%s] %s\n", t, msg);
         fflush(file_handles.log_file);
@@ -86,6 +87,8 @@ void log_log(char *msg) {
         printf("[%s] %s\n", t, msg);
         syncfs(1);
     }
+
+    log_log_lock = 0;
 }
 
 /**
