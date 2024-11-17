@@ -15,6 +15,8 @@
 #include "rng.h"
 #include "util.h"
 
+static char msg_buffer[512];
+
 /**
  * Probe the device to determine the optimal size of write requests.
  *
@@ -72,16 +74,14 @@ int probe_for_optimal_block_size(int fd) {
         log_log(msg);
         log_log("probe_for_optimal_block_size(): Skipping optimal write block size test.");
 
-        message_window(stdscr, ERROR_TITLE, (char *[]) {
-            "Unable to obtain a lock on the lockfile.  For now, we'll skip the optimal write",
-            "block size test and use other means to determine the optimal write block size.",
-            "However, if this happens again, other tests may fail or lock up.",
-            "",
-            "The error we got while trying to get a lock on the lockfile was:",
-            strerror(local_errno),
-            NULL
-        }, 1);
+        snprintf(msg_buffer, sizeof(msg_buffer),
+                 "Unable to obtain a lock on the lockfile.  For now, we'll "
+                 "skip the optimal write block size test and use other means "
+                 "to determine the optimal write block size.  However, if this "
+                 "happens again, other tests may fail or lock up.\n\nThe error "
+                 "we got was: %s", strerror(local_errno));
 
+        message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
         return -1;
     }
 
@@ -91,11 +91,9 @@ int probe_for_optimal_block_size(int fd) {
     for(max = 17; (1 << (max + 9)) > device_stats.max_request_size && max > (min + 1); max--) {}
 
     log_log("probe_for_optimal_block_size(): Probing for optimal write block size...");
-    window = message_window(stdscr, "Probing for optimal write block size", (char *[]) {
-        "",
-        "                                        ", // Make room for the progress bar
-        NULL
-    }, 0);
+    window = message_window(stdscr, "Probing for optimal write block size",
+        "\n                                        ", // Make room for the progress bar
+    0);
 
     buf = valloc(buf_size);
     if(!buf) {
@@ -105,13 +103,11 @@ int probe_for_optimal_block_size(int fd) {
         log_log(msg);
 
         erase_and_delete_window(window);
-        message_window(stdscr, WARNING_TITLE, (char *[]) {
-            "We ran into an error while trying to allocate memory for the",
-            "optimal write block size test.  This could mean your system"
-            "is low on memory.  For now, we'll use other data to",
-            "determine the optimal write block size.",
-            NULL
-        }, 1);
+        message_window(stdscr, WARNING_TITLE,
+                       "We ran into an error while trying to allocate memory "
+                       "for the optimal write block size test.  This could "
+                       "mean your system is low on memory.  For now, we'll use "
+                       "other data to determine the optimal write block size.", 1);
 
         return -1;
     }
@@ -156,14 +152,17 @@ int probe_for_optimal_block_size(int fd) {
                     log_log(msg);
 
                     erase_and_delete_window(window);
-                    message_window(stdscr, WARNING_TITLE, (char *[]) {
-                        "We ran into an error while trying to probe for the optimal write block size.  It",
-                        "could be that the device was removed, experienced an error and disconnected",
-                        "itself, or set itself to read-only.  For now, we'll use other means to determine",
-                        "the optimal write block size -- but if the device really has been removed or set",
-                        "to read-only, the remainder of the tests are going to fail pretty quickly.",
-                        NULL
-                    }, 1);
+                    message_window(stdscr, WARNING_TITLE,
+                                   "We ran into an error while trying to probe "
+                                   "for the optimal write block size.  It "
+                                   "could be that the device was removed, "
+                                   "experienced an error and disconnected "
+                                   "itself, or set itself to read-only.  For "
+                                   "now, we'll use other means to determine the "
+                                   "optimal write block size -- but if the "
+                                   "device really has been removed or set to "
+                                   "read-only, the remainder of the tests are "
+                                   "going to fail pretty quickly.", 1);
 
                     return -1;
                 } else {
@@ -215,18 +214,17 @@ int probe_for_optimal_block_size(int fd) {
 
             erase_and_delete_window(window);
 
-            message_window(stdscr, WARNING_TITLE, (char *[]) {
-                "We encountered an error while trying to probe for the optimal write block size.",
-                "It could be that the device was disconnected, or experienced an error and",
-                "disconnected itself.  For now, we'll use other means to determine the optimal",
-                "write block size -- but if the device really has been removed, the remainder of",
-                "the tests are going to fail pretty quickly.",
-                "",
-                "The error we encountered was:",
-                strerror(local_errno),
-                NULL
-            }, 1);
+            snprintf(msg_buffer, sizeof(msg_buffer),
+                     "We encountered an error while trying to probe for the "
+                     "optimal write block size.  It could be that the device "
+                     "was disconnected, or experienced an error and "
+                     "disconnected itself.  For now, we'll use other means to "
+                     "determine the optimal write block size -- but if the "
+                     "device really has been removed, the remainder of the "
+                     "tests are going to fail pretty quickly.\n\nThe error we "
+                     "got was: %s", strerror(local_errno));
 
+            message_window(stdscr, WARNING_TITLE, msg_buffer, 1);
             return -1;
         }
 

@@ -34,7 +34,7 @@
  *          turned off.  If a pointer to a new window is returned, it is the
  *          callers responsibility to delete it when done.
  */
-WINDOW *message_window(WINDOW *parent, const char *title, char **msg, char wait);
+WINDOW *message_window(WINDOW *parent, const char *title, char *msg, char wait);
 
 /**
  * A wrapper for getch()/wgetch() that handles KEY_RESIZE events.
