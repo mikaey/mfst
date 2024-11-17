@@ -504,7 +504,7 @@ void print_class_marking_qualifications() {
     }
 }
 
-void print_sql_status(SqlThreadStatusType status) {
+void print_sql_status(sql_thread_status_type status) {
     mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "               ");
 
     switch(status) {
@@ -551,7 +551,7 @@ void redraw_screen() {
         attroff(A_BOLD);
 
         if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
-            print_sql_status(sqlThreadStatus);
+            print_sql_status(sql_thread_status);
         }
 
         // Draw the device name
@@ -2320,8 +2320,8 @@ int main(int argc, char **argv) {
     WINDOW *window;
     dev_t new_device_num;
     pthread_t sql_thread;
-    SqlThreadParamsType sql_thread_params;
-    SqlThreadStatusType prev_sql_thread_status = 0;
+    sql_thread_params_type sql_thread_params;
+    sql_thread_status_type prev_sql_thread_status = 0;
 
     // Set things up so that cleanup() works properly
     sector_display.sector_map = NULL;
@@ -2993,34 +2993,34 @@ int main(int argc, char **argv) {
     stats_cur_time = stress_test_stats.previous_update_time;
 
     // Fire up the SQL thread
-    sqlThreadStatus = SQL_THREAD_NOT_CONNECTED;
+    sql_thread_status = SQL_THREAD_NOT_CONNECTED;
 
     if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
-        sql_thread_params.mysqlHost = program_options.db_host;
-        sql_thread_params.mysqlUsername = program_options.db_user;
-        sql_thread_params.mysqlPassword = program_options.db_pass;
-        sql_thread_params.mysqlPort = program_options.db_port;
-        sql_thread_params.mysqlDbName = program_options.db_name;
-        sql_thread_params.cardName = program_options.card_name;
-        sql_thread_params.cardId = program_options.card_id;
+        sql_thread_params.mysql_host = program_options.db_host;
+        sql_thread_params.mysql_username = program_options.db_user;
+        sql_thread_params.mysql_password = program_options.db_pass;
+        sql_thread_params.mysql_port = program_options.db_port;
+        sql_thread_params.mysql_db_name = program_options.db_name;
+        sql_thread_params.card_name = program_options.card_name;
+        sql_thread_params.card_id = program_options.card_id;
 
-        if(iret = pthread_create(&sql_thread, NULL, &sqlThreadMain, &sql_thread_params)) {
-            sqlThreadStatus = SQL_THREAD_ERROR;
+        if(iret = pthread_create(&sql_thread, NULL, &sql_thread_main, &sql_thread_params)) {
+            sql_thread_status = SQL_THREAD_ERROR;
             snprintf(msg_buffer, sizeof(msg_buffer), "Error creating SQL thread: %s", strerror(iret));
             log_log(msg_buffer);
         }
     }
 
-    print_sql_status(sqlThreadStatus);
-    prev_sql_thread_status = sqlThreadStatus;
+    print_sql_status(sql_thread_status);
+    prev_sql_thread_status = sql_thread_status;
 
     for(num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
         main_thread_status = MAIN_THREAD_STATUS_WRITING;
         draw_percentage(); // Just in case it hasn't been drawn recently
 
-        if(prev_sql_thread_status != sqlThreadStatus) {
-            prev_sql_thread_status = sqlThreadStatus;
-            print_sql_status(sqlThreadStatus);
+        if(prev_sql_thread_status != sql_thread_status) {
+            prev_sql_thread_status = sql_thread_status;
+            print_sql_status(sql_thread_status);
         }
 
         if(num_rounds > 0) {
@@ -3033,9 +3033,9 @@ int main(int argc, char **argv) {
             }
         }
 
-        if(prev_sql_thread_status != sqlThreadStatus) {
-            prev_sql_thread_status = sqlThreadStatus;
-            print_sql_status(sqlThreadStatus);
+        if(prev_sql_thread_status != sql_thread_status) {
+            prev_sql_thread_status = sql_thread_status;
+            print_sql_status(sql_thread_status);
         }
 
         is_writing = 1;
@@ -3254,9 +3254,9 @@ int main(int argc, char **argv) {
             }
 
             for(cur_sector = get_slice_start(read_order[cur_slice]); cur_sector < last_sector; cur_sector += cur_sectors_per_block) {
-                if(sqlThreadStatus != prev_sql_thread_status) {
-                    prev_sql_thread_status = sqlThreadStatus;
-                    print_sql_status(sqlThreadStatus);
+                if(sql_thread_status != prev_sql_thread_status) {
+                    prev_sql_thread_status = sql_thread_status;
+                    print_sql_status(sql_thread_status);
                 }
 
                 // Use bytes_left_to_write to hold the bytes left to read

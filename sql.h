@@ -10,20 +10,20 @@ typedef enum {
               SQL_THREAD_DISCONNECTED, // We were previously connected to the SQL server, but we've been disconnected
               SQL_THREAD_QUERY_EXECUTING,
               SQL_THREAD_ERROR
-} SqlThreadStatusType;
+} sql_thread_status_type;
 
-typedef struct _SqlThreadParamsType {
-    char *mysqlHost;
-    char *mysqlUsername;
-    char *mysqlPassword;
-    int mysqlPort;
-    char *mysqlDbName;
-    char *cardName;
-    uint64_t cardId;
-} SqlThreadParamsType;
+typedef struct _sql_thread_params_type {
+    char *mysql_host;
+    char *mysql_username;
+    char *mysql_password;
+    int mysql_port;
+    char *mysql_db_name;
+    char *card_name;
+    uint64_t card_id;
+} sql_thread_params_type;
 
-extern volatile SqlThreadStatusType sqlThreadStatus;
+extern volatile sql_thread_status_type sql_thread_status;
 
-void *sqlThreadMain(void *arg);
+void *sql_thread_main(void *arg);
 
 #endif // !defined(SQL_H)
