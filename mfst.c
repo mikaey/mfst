@@ -182,8 +182,14 @@ void draw_sector(uint64_t sector_num, int color, int with_diamond) {
     }
 
     block_num = sector_num / sector_display.sectors_per_block;
-    row = block_num / sector_display.blocks_per_line;
-    col = block_num - (row * sector_display.blocks_per_line);
+    if(block_num >= sector_display.num_blocks) {
+        row = sector_display.num_lines - 1;
+        col = sector_display.blocks_per_line - 1;
+    } else {
+        row = block_num / sector_display.blocks_per_line;
+        col = block_num - (row * sector_display.blocks_per_line);
+    }
+
     attron(COLOR_PAIR(color));
 
     if(with_diamond) {
@@ -213,6 +219,14 @@ void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
 
     min = start_sector / sector_display.sectors_per_block;
     max = (end_sector / sector_display.sectors_per_block) + ((end_sector % sector_display.sectors_per_block) ? 1 : 0);
+
+    if(min >= sector_display.num_blocks) {
+        min = sector_display.num_blocks - 1;
+    }
+
+    if(max > sector_display.num_blocks) {
+        max = sector_display.num_blocks;
+    }
 
     for(i = min; i < max; i++) {
         cur_block_has_bad_sectors = 0;
@@ -353,14 +367,8 @@ void redraw_sector_map() {
     sector_display.blocks_per_line = COLS - 41;
     sector_display.num_lines = LINES - 8;
     sector_display.num_blocks = sector_display.num_lines * sector_display.blocks_per_line;
-
-    if(device_stats.num_sectors % sector_display.num_blocks) {
-        sector_display.sectors_per_block = device_stats.num_sectors / (sector_display.num_blocks - 1);
-        sector_display.sectors_in_last_block = device_stats.num_sectors % (sector_display.num_blocks - 1);
-    } else {
-        sector_display.sectors_per_block = device_stats.num_sectors / sector_display.num_blocks;
-        sector_display.sectors_in_last_block = sector_display.sectors_per_block;
-    }
+    sector_display.sectors_per_block = device_stats.num_sectors / sector_display.num_blocks;
+    sector_display.sectors_in_last_block = device_stats.num_sectors % sector_display.num_blocks + sector_display.sectors_per_block;
 
     mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_stats.sector_size);
 
