@@ -69,7 +69,7 @@ volatile int log_log_lock = 0;
 
 // Scratch buffer for messages; we're allocating it statically so that we can
 // still log messages in case of memory shortages
-static char msg_buffer[256];
+static char msg_buffer[512];
 
 void log_log(char *msg) {
     time_t now = time(NULL);
