@@ -95,8 +95,7 @@ int probe_for_optimal_block_size(int fd) {
         "\n                                        ", // Make room for the progress bar
     0);
 
-    buf = valloc(buf_size);
-    if(!buf) {
+    if(local_errno = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), buf_size)) {
         unlock_lockfile();
 
         snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): valloc() returned an error: %s", strerror(errno));

@@ -829,8 +829,8 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
     char *aligned_buf;
     int64_t ret;
 
-    if(!(aligned_buf = (char *) valloc(len))) {
-      return -1;
+    if(ret = posix_memalign((void **) &aligned_buf, sysconf(_SC_PAGESIZE), len)) {
+        return -1;
     }
 
     block_size = len > optimal_block_size ? optimal_block_size : len;
@@ -884,7 +884,7 @@ void write_error_during_size_probe(int errnum) {
 }
 
 void memory_error_during_size_probe(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): valloc() returned an error: %s", strerror(errnum));
+    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): posix_memalign() returned an error: %s", strerror(errnum));
     log_log(msg_buffer);
     log_log("probe_device_size(): Aborting device size test");
 
@@ -902,7 +902,7 @@ void memory_error_during_size_probe(int errnum) {
 uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_size) {
     // Start out by writing to 9 different places on the card to minimize the
     // chances that the card is interspersed with good blocks.
-    int errnum;
+    int errnum, iret;
     char *buf, *readbuf, keep_searching;
     unsigned int random_seed, i, bytes_left, ret;
     uint64_t initial_sectors[9];
@@ -915,23 +915,19 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     log_log("probe_device_size(): Probing for actual device size");
     window = message_window(stdscr, NULL, "Probing for actual device size...", 0);
 
-    buf = valloc(buf_size);
-    if(!buf) {
-        errnum = errno;
+    if(iret = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), buf_size)) {
         erase_and_delete_window(window);
 
-        memory_error_during_size_probe(errnum);
+        memory_error_during_size_probe(iret);
 
         return 0;
     }
 
-    readbuf = valloc(buf_size);
-    if(!readbuf) {
-        errnum = errno;
+    if(iret = posix_memalign((void **) &readbuf, sysconf(_SC_PAGESIZE), buf_size)) {
         erase_and_delete_window(window);
         free(buf);
 
-        memory_error_during_size_probe(errnum);
+        memory_error_during_size_probe(iret);
 
         return 0;
     }
@@ -1258,9 +1254,8 @@ int probe_device_speeds(int fd) {
         return -1;
     }
 
-    if(!(buf = valloc(device_stats.block_size < 4096 ? 4096 : device_stats.block_size))) {
-        local_errno = errno;
-        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): valloc() returned an error: %s", strerror(local_errno));
+    if(local_errno = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), device_stats.block_size < 4096 ? 4096 : device_stats.block_size)) {
+        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): posix_memalign() returned an error: %s", strerror(local_errno));
         log_log(msg_buffer);
         log_log("probe_device_speeds(): Aborting speed tests");
 
@@ -2175,15 +2170,13 @@ void malloc_error(int errnum) {
     message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
-void valloc_error(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "valloc() failed: %s", strerror(errnum));
-    log_log(msg_buffer);
 
+void posix_memalign_error(int errnum) {
     snprintf(msg_buffer, sizeof(msg_buffer),
-        "Failed to allocate memory for one of the buffers we need to do the "
-        "stress test.  Unfortunately this means we have to abort the stress "
-        "test.\n\nThe error we got while trying to allocate memory was: %s",
-        strerror(errnum));
+             "Failed to allocate memory for one of the buffers we need to do "
+             "the stress test.  Unfortunately this means we have to abort the "
+             "stress test.\n\nThe error we got was: %s", strerror(errnum));
+
     message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
@@ -2911,16 +2904,17 @@ int main(int argc, char **argv) {
 
     rng_init(initial_seed);
 
-    buf = (char *) valloc(device_stats.block_size);
-    if(!buf) {
-        valloc_error(errno);
+    // Allocate buffers for reading from/writing to the device.  We're using
+    // posix_memalign because the memory needs to be aligned on a page boundary
+    // (since we're doing unbuffered reading/writing).
+    if(ret = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), device_stats.block_size)) {
+        posix_memalign_error(ret);
         cleanup();
         return -1;
     }
 
-    compare_buf = (char *) valloc(device_stats.block_size);
-    if(!compare_buf) {
-        valloc_error(errno);
+    if(ret = posix_memalign((void **) &compare_buf, sysconf(_SC_PAGESIZE), device_stats.block_size)) {
+        posix_memalign_error(ret);
         cleanup();
         return -1;
     }
