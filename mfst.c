@@ -855,28 +855,12 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
     return 0;
 }
 
-void lseek_error_during_size_probe(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): lseek() returned an error: %s", strerror(errnum));
-    log_log(msg_buffer);
+void io_error_during_size_probe() {
     log_log("probe_device_size(): Aborting device size test");
 
     message_window(stdscr, WARNING_TITLE,
-                   "We encountered an error while trying to move around the "
-                   "device.  It could be that the device was removed or "
-                   "experienced an error and disconnected itself.  For now, "
-                   "we'll assume that the device is the size it says it is -- "
-                   "but if the device has actually been disconnected, the "
-                   "remainder of the tests are going to fail pretty quickly.", 1);
-}
-
-void write_error_during_size_probe(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): write() returned an error: %s", strerror(errnum));
-    log_log(msg_buffer);
-    log_log("probe_device_size(): Aborting device size test");
-
-    message_window(stdscr, WARNING_TITLE,
-                   "We encountered an error while trying to write to the "
-                   "device.  It could be that the device was removed or "
+                   "We encountered an error while trying to determine the size "
+                   "of the device.  It could be that the device was removed or "
                    "experienced an error and disconnected itself.  For now, "
                    "we'll assume that the device is the size it says it is -- "
                    "but if the device has actually been disconnected, the "
@@ -973,7 +957,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            lseek_error_during_size_probe(errnum);
+            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            io_error_during_size_probe();
 
             return 0;            
         }
@@ -983,7 +968,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            write_error_during_size_probe(errnum);
+            log_log("probe_device_size(): write() returned an error: %s", strerror(errnum));
+            io_error_during_size_probe();
 
             return 0;
         }
@@ -1004,7 +990,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            lseek_error_during_size_probe(errnum);
+            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            io_error_during_size_probe();
 
             return 0;
         }
@@ -1114,7 +1101,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            lseek_error_during_size_probe(errnum);
+            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            io_error_during_size_probe();
 
             return 0;
         }
@@ -1126,7 +1114,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            write_error_during_size_probe(errnum);
+            log_log("probe_device_size(): write() returned an error: %s", strerror(errnum));
+            io_error_during_size_probe();
 
             return 0;
         }
@@ -1136,7 +1125,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            lseek_error_during_size_probe(errnum);
+            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            io_error_during_size_probe();
 
             return 0;
         }
@@ -1808,6 +1798,28 @@ int parse_command_line_arguments(int argc, char **argv) {
     return 0;
 }
 
+WINDOW *device_disconnected_message() {
+    return message_window(stdscr, "Device Disconnected",
+                          "The device has been disconnected.  It may have done "
+                          "this on its own, or it may have been manually "
+                          "removed (e.g., if someone pulled the device out of "
+                          "its USB port).\n\nDon't worry -- just plug the "
+                          "device back in.  We'll verify that it's the same "
+                          "device, then resume the stress test automatically.", 0);
+}
+
+WINDOW *resetting_device_message() {
+    return message_window(stdscr, "Attempting to reset device",
+                          "The device has encountered an error.  We're "
+                          "attempting to reset the device to see if that fixes "
+                          "the issue.  You shouldn't need to do anything -- "
+                          "but if this message stays up for a while, it might "
+                          "indicate that the device has failed or isn't "
+                          "handling the reset well.  In that case, you can try "
+                          "unplugging the device and plugging it back in to "
+                          "get the device working again.", 0);
+}
+
 off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
     int op_retry_count;
     int reset_retry_count;
@@ -1838,13 +1850,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
 
                 main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                 log_log("retriable_lseek(): Device disconnected.  Waiting for device to be reconnected...");
-                window = message_window(stdscr, "Device Disconnected",
-                    "The device has been disconnected.  It may have done this "
-                    "on its own, or it may have been manually removed (e.g., "
-                    "if someone pulled the device out of its USB port).\n\n"
-                    "Don't worry -- just plug the device back in.  We'll "
-                    "verify that it's the same device, then resume the stress "
-                    "test automatically.", 0);
+                window = device_disconnected_message();
 
                 iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
 
@@ -1871,16 +1877,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
                 } else {
                     if(can_reset_device(device_stats.device_num)) {
                         log_log("retriable_lseek(): Device error.  Attempting to reset the device...");
-                        window = message_window(stdscr, "Attempting to reset device",
-                            "The device has encountered an error.  We're "
-                            "attempting to reset the device to see if that "
-                            "fixes the issue.  You shouldn't need to do "
-                            "anything -- but if this message stays up for a "
-                            "while, it might indicate that the device has "
-                            "failed or isn't handling the reset well.  In that "
-                            "case, you can try unplugging the device and "
-                            "plugging it back in to get the device working "
-                            "again.", 0);
+                        window = resetting_device_message();
 
                         main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                         *fd = reset_device(*fd);
@@ -1942,13 +1939,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
 
             main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
             log_log("retriable_read(): Device disconnected.  Waiting for device to be reconnected...");
-            window = message_window(stdscr, "Device Disconnected",
-                "The device has been disconnected.  It may have done this on "
-                "its own, or it may have been manually removed (e.g., if "
-                "someone pulled the device out of its USB port).\n\nDon't "
-                "worry -- just plug the device back in.  We'll verify that "
-                "it's the same device, then resume the stress test "
-                "automatically.", 0);
+            window = device_disconnected_message();
 
             iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
 
@@ -1983,15 +1974,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
             } else {
                 if(can_reset_device(device_stats.device_num)) {
                     log_log("retriable_read(): Device error.  Attempting to reset the device...");
-                    window = message_window(stdscr, "Attempting to reset device",
-                        "The device has encountered an error.  We're "
-                        "attempting to reset the device to see if that fixes "
-                        "the issue.  You shouldn't need to do anything -- but "
-                        "if this message stays up for a while, it might "
-                        "indicate that the device has failed or isn't handling "
-                        "the reset well.  In that case, you can try unplugging "
-                        "the device and plugging it back in to get it working "
-                        "again.", 0);
+                    window = resetting_device_message();
 
                     main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                     *fd = reset_device(*fd);
@@ -2065,13 +2048,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
 
                 main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                 log_log("retriable_write(): Device disconnected.  Waiting for device to be reconnected...");
-                window = message_window(stdscr, "Device Disconnected",
-                    "The device has been disconnected.  It may have done this "
-                    "on its own, or it may have been manually removed (e.g., "
-                    "if someone pulled the device out of its USB port).\n\n"
-                    "Don't worry -- just plug the device back in.  We'll "
-                    "verify that it's the same device, then resume the stress "
-                    "test automatically.", 0);
+                window = device_disconnected_message();
 
                 iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
 
@@ -2108,16 +2085,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
                 } else {
                     if(can_reset_device(device_stats.device_num)) {
                         log_log("retriable_write(): Device error.  Attempting to reset the device...");
-                        window = message_window(stdscr, "Attempting to reset device",
-                            "The device has encountered an error.  We're "
-                            "attempting to reset the device to see if that "
-                            "fixes the issue.  You shouldn't need to do "
-                            "anything -- but if this message stays up for a "
-                            "while, it might indicate that the device has "
-                            "failed or isn't handling the reset well.  In that "
-                            "case, you can try unplugging the device and "
-                            "plugging it back in to get the device working "
-                            "again.", 0);
+                        window = resetting_device_message();
 
                         main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                         *fd = reset_device(*fd);
@@ -2298,6 +2266,233 @@ void log_sector_contents(uint64_t sector_num, int sector_size, char *expected_da
     log_log("");
 }
 
+void state_file_error() {
+    WINDOW *window;
+    int i;
+
+    const char *warning_text =
+        "There was a problem loading the state file.  If you want to continue "
+        "and just ignore the existing state file, then you can ignore this "
+        "message.  Otherwise, you have %d seconds to hit Ctrl+C.";
+
+    log_log("WARNING: There was a problem loading the state file.  The existing state file");
+    log_log("will be ignored (and eventually overwritten).  If you don't want this to happen,");
+    log_log("you have 15 seconds to hit Ctrl+C to abort the program.");
+
+    snprintf(msg_buffer, sizeof(msg_buffer), warning_text, 15);
+
+    window = message_window(stdscr, WARNING_TITLE, msg_buffer, 0);
+
+    if(window) {
+        for(i = 0; i < 150; i++) {
+            handle_key_inputs(window);
+            usleep(100000);
+            if(i && !(i % 10)) {
+                snprintf(msg_buffer, sizeof(msg_buffer), warning_text, 15 - (i / 10));
+                delwin(window);
+                window = message_window(stdscr, WARNING_TITLE, msg_buffer, 0);
+                wrefresh(window);
+            }
+        }
+    } else {
+        sleep(15);
+    }
+
+    erase_and_delete_window(window);
+}
+
+void show_initial_warning_message() {
+    WINDOW *window;
+    int i;
+
+    const char *warning_text =
+        "This program is DESTRUCTIVE.  It is designed to stress test storage "
+        "devices (particularly flash media) to the point of failure.  If you "
+        "let this program run for long enough, it WILL completely destroy the "
+        "device and render it completely unusable.  Do not use it on any "
+        "storage devices that you care about.\n\nAny data on %s is going to be "
+        "overwritten -- multiple times.  If you're not OK with this, you have "
+        "%d seconds to hit Ctrl+C before we start doing anything.";
+
+    log_log("WARNING: This program is DESTRUCTIVE.  It is designed to stress test storage");
+    log_log("devices (particularly flash media) to the point of failure.  If you let this");
+    log_log("program run for long enough, it WILL completely destroy the device and render it");
+    log_log("completely unusable.  Do not use it on any storage devices that you care about.");
+    log_log("");
+    snprintf(str, sizeof(str), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
+    log_log(str);
+    log_log("not OK with this, you have 15 seconds to hit Ctrl+C before we start doing anything.");
+
+    snprintf(msg_buffer, sizeof(msg_buffer), warning_text, program_options.device_name, 15);
+    window = message_window(stdscr, WARNING_TITLE, msg_buffer, 0);
+
+    if(window) {
+        for(i = 0; i < 150; i++) {
+            handle_key_inputs(window);
+            usleep(100000);
+            if(i && !(i % 10)) {
+                delwin(window);
+                snprintf(msg_buffer, sizeof(msg_buffer), warning_text, program_options.device_name, 15 - (i / 10));
+                window = message_window(stdscr, WARNING_TITLE, msg_buffer, 0);
+                wrefresh(window);
+            }
+        }
+    } else {
+        sleep(15);
+    }
+
+    erase_and_delete_window(window);
+}
+
+void log_file_open_error(int errnum) {
+    if(!program_options.no_curses) {
+        snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open log file %s: %s", program_options.log_file, strerror(errnum));
+        message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+    } else {
+        printf("Got the following error while trying to open log file %s: %s\n", program_options.log_file, strerror(errnum));
+    }
+}
+
+void lockfile_open_error(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open lock file %s: %s", program_options.lock_file, strerror(errnum));
+    log_log(msg_buffer);
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void stats_file_open_error(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open stats file %s: %s", program_options.stats_file, strerror(errnum));
+    log_log(msg_buffer);
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void no_working_gettimeofday(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling gettimeofday(): %s", strerror(errnum));
+    log_log(msg_buffer);
+    log_log("Unable to test -- your system doesn't have a working gettimeofday() call.");
+
+    snprintf(msg_buffer, sizeof(msg_buffer),
+             "We won't be able to test this device because your system doesn't "
+             "have a working gettimeofday() call.  So many things in this "
+             "program depend on this that it would take a lot of work to make "
+             "this program work without it, and I'm lazy.\n\nThe error we got "
+             "was: %s", strerror(errnum));
+
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void device_locate_error() {
+    log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
+    message_window(stdscr, ERROR_TITLE,
+                   "An error occurred while trying to locate the device "
+                   "described in the state file. (Make sure you're running "
+                   "this program as root.)", 1);
+}
+
+void multiple_matching_devices_error() {
+    log_log("Multiple devices found that match the data in the state file.  Please specify which device you want to test on the command line.");
+    message_window(stdscr, ERROR_TITLE,
+                   "There are multiple devices that match the data in the "
+                   "state file.  Please specify which device you want to "
+                   "test on the command line.", 1);
+}
+
+void wrong_device_specified_error() {
+    log_log("The device specified on the command line does not match the device described in the state file.");
+    log_log("Please remove the device from the command line or specify a different device.");
+
+    message_window(stdscr, ERROR_TITLE,
+                   "The device you specified on the command line does not "
+                   "match the device described in the state file.  If you run "
+                   "this program again without the device name, we'll figure "
+                   "out which device to use automatically.  Otherwise, provide "
+                   "a different device on the command line.", 1);
+}
+
+WINDOW *no_matching_device_warning() {
+    log_log("No devices could be found that match the data in the state file.  Attach one now...");
+    return message_window(stdscr, "No devices found",
+                          "No devices could be found that match the data in "
+                          "the state file.  If you haven't plugged the device "
+                          "in yet, go ahead and do so now.  Otherwise, you can "
+                          "hit Ctrl+C now to abort the program.", 0);
+}
+
+void wait_for_device_connect_error(WINDOW *window) {
+    if(window) {
+        erase_and_delete_window(window);
+    }
+
+    log_log("An error occurred while waiting for the device to be reconnected.");
+    message_window(stdscr, ERROR_TITLE, "An error occurred while waiting for you to reconnect the device.", 1);
+}
+
+void fstat_error(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling fstat() on %s: %s\n", program_options.device_name, strerror(errnum));
+    log_log(msg_buffer);
+    log_log("Unable to test -- unable to pull stats on the device.");
+
+    snprintf(msg_buffer, sizeof(msg_buffer),
+             "We won't be able to test %s because we weren't able to pull stats"
+             "on it.  The device may have been removed, or you may not have "
+             "permissions to open it.  (Make sure you're running this program "
+             "as root.)\n\nThe error we got was: %s", program_options.device_name, strerror(errnum));
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void stat_error(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(errnum));
+    log_log(msg_buffer);
+    log_log("Unable to test -- unable to pull stats on the device.");
+
+    snprintf(msg_buffer, sizeof(msg_buffer),
+             "We won't be able to test this device because we were unable to "
+             "pull stats on it.  The device may have been removed, or you may "
+             "not have permissions to open it.  (Make sure you're running this "
+             "program as root.)\n\nThe error we got was: %s", strerror(errnum));
+
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void not_a_block_device_error() {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Unable to test -- %s is not a block device", program_options.device_name);
+    log_log(msg_buffer);
+
+    message_window(stdscr, ERROR_TITLE, "We won't be able to test this device because it isn't a block device.  You must provide a block device to test with.", 1);
+}
+
+void device_open_error(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Failed to open %s: %s", program_options.device_name, strerror(errnum));
+    log_log(msg_buffer);
+    log_log("Unable to test -- couldn't open device.  Make sure you run this program as sudo.");
+
+    snprintf(msg_buffer, sizeof(msg_buffer),
+             "We won't be able to test this device because we couldn't open "
+             "it.  The device might have gone away, or you might not have "
+             "permission to open it.  (Make sure you run this program as "
+             "root.)\n\nHere's the error was got: %s", strerror(errnum));
+
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void ioctl_error(int errnum) {
+    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(errnum));
+    log_log(msg_buffer);
+
+    snprintf(msg_buffer, sizeof(msg_buffer),
+             "We won't be able to test this device because we couldn't pull "
+             "stats on it.\n\nHere's the error we got: %s", strerror(errnum));
+
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+void save_state_error() {
+    log_log("Error creating save state, disabling save stating");
+    message_window(stdscr, WARNING_TITLE, "An error occurred while trying to save the program state.  Save stating has been disabled.", 1);
+
+    free(program_options.state_file);
+    program_options.state_file = NULL;
+}
+
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
@@ -2458,79 +2653,20 @@ int main(int argc, char **argv) {
     }
 
     if(state_file_status == LOAD_STATE_LOAD_ERROR) {
-        log_log("WARNING: There was a problem loading the state file.  The existing state file");
-        log_log("will be ignored (and eventually overwritten).  If you don't want this to happen,");
-        log_log("you have 15 seconds to hit Ctrl+C to abort the program.");
-        
-        window = message_window(stdscr, WARNING_TITLE,
-            "There was a problem loading the state file.  If you want to "
-            "continue and just ignore the existing state file, then you can "
-            "ignore this message.  Otherwise, you have 15 seconds to hit "
-            "Ctrl+C.", 0);
-
-        if(window) {
-            for(j = 0; j < 15; j++) {
-                handle_key_inputs(window);
-                sleep(1);
-                mvwprintw(window, 3, 11, "%-2lu", 14 - j);
-                wrefresh(window);
-            }
-        } else {
-            sleep(15);
-        }
-
-        erase_and_delete_window(window);
-
+        state_file_error();
         state_file_status = LOAD_STATE_FILE_DOES_NOT_EXIST;
     }
 
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         if(!program_options.dont_show_warning_message) {
-            log_log("WARNING: This program is DESTRUCTIVE.  It is designed to stress test storage");
-            log_log("devices (particularly flash media) to the point of failure.  If you let this");
-            log_log("program run for long enough, it WILL completely destroy the device and render it"),
-            log_log("completely unusable.  Do not use it on any storage devices that you care about.");
-            log_log("");
-            snprintf(msg_buffer, sizeof(msg_buffer), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
-            log_log(msg_buffer);
-            log_log("not OK with this, you have 15 seconds to hit Ctrl+C before we start doing anything.");
-            
-            snprintf(msg_buffer, sizeof(msg_buffer),
-                "This program is DESTRUCTIVE.  It is designed to stress test "
-                "storage devices (particularly flash media) to the point of "
-                "failure.  If you let this program run for long enough, it "
-                "WILL completely destroy the device and render it completely "
-                "unusable.  Do not use it on any storage devices that you care "
-                "about.\n\nAny data on %s is going to be overwritten -- "
-                "multiple times.  If you're not OK with this, you have 15 "
-                "seconds to hit Ctrl+C.", 0);
-
-            if(window) {
-                for(j = 0; j < 15; j++) {
-                    handle_key_inputs(window);
-                    sleep(1);
-                    mvwprintw(window, 7, 29, "%-2lu", 14 - j);
-                    wrefresh(window);
-                }
-            } else {
-                sleep(15);
-            }
-
-            erase_and_delete_window(window);
+            show_initial_warning_message();
         }
     }
 
     if(program_options.log_file) {
         file_handles.log_file = fopen(program_options.log_file, "a");
         if(!file_handles.log_file) {
-            if(!program_options.no_curses) {
-                local_errno = errno;
-                snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open log file %s: %s", program_options.log_file, strerror(local_errno));
-                message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-            } else {
-                printf("Got the following error while trying to open log file %s: %s\n", program_options.log_file, strerror(errno));
-            }
-
+            log_file_open_error(errno);
             cleanup();
             return -1;
         }
@@ -2545,6 +2681,7 @@ int main(int argc, char **argv) {
     }
 
     if(iret = open_lockfile(program_options.lock_file)) {
+        lockfile_open_error(iret);
         cleanup();
         return -1;
     }
@@ -2553,11 +2690,7 @@ int main(int argc, char **argv) {
         file_handles.stats_file = fopen(program_options.stats_file, "a");
         if(!file_handles.stats_file) {
             local_errno = errno;
-            snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open stats file %s: %s", program_options.stats_file, strerror(local_errno));
-            log_log(str);
-
-            message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+            stats_file_open_error(errno);
             cleanup();
             return -1;
         }
@@ -2573,19 +2706,7 @@ int main(int argc, char **argv) {
 
     // Does the system have a working gettimeofday?
     if(gettimeofday(&speed_start_time, NULL) == -1) {
-        local_errno = errno;
-        snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling gettimeofday(): %s", strerror(local_errno));
-        log_log(msg_buffer);
-        log_log("Unable to test -- your system doesn't have a working gettimeofday() call.");
-        snprintf(msg_buffer, sizeof(msg_buffer),
-            "We won't be able to test this device because your system doesn't "
-            "have a working gettimeofday() call.  So many things in this "
-            "program depend on this that it would take a lot of work to make "
-            "this program work without it, and I'm lazy.\n\nThis is the error "
-            "we got while trying to call gettimeofday(): %s",
-            strerror(local_errno));
-        message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+        no_working_gettimeofday(errno);
         cleanup();
         return -1;
     }
@@ -2600,54 +2721,25 @@ int main(int argc, char **argv) {
         erase_and_delete_window(window);
 
         if(iret == -1) {
-            log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
-            message_window(stdscr, ERROR_TITLE,
-                "An error occurred while trying to locate the device described "
-                "in the state file.  (Make sure you're running this program "
-                "with sudo.)", 1);
-
+            device_locate_error();
             cleanup();
             return -1;
         } else if(iret > 1) {
-            log_log("Multiple devices found that match the data in the state file.  Please specify which device you want to test on the command line.");
-            message_window(stdscr, ERROR_TITLE,
-                "There are multiple devices that match the data in the state "
-                "file.  Please specify which device you want to test on the "
-                "command line.", 1);
-            
+            multiple_matching_devices_error();
             cleanup();
             return -1;
         } else if(iret == 0) {
             if(program_options.device_name) {
-                log_log("The device specified on the command line does not match the device described in the state file.");
-                log_log("Please remove the device from the command line or specify a different device.");
-                message_window(stdscr, ERROR_TITLE,
-                    "The device you specified on the command line does not "
-                    "match the device described in the state file.  If you run "
-                    "this program again without the device name, we'll figure "
-                    "out which device to use automatically.  Otherwise, please "
-                    "provide a different device on the command line.", 1);
-
+                wrong_device_specified_error();
                 cleanup();
                 return -1;
             } else {
-                log_log("No devices could be found that match the data in the state file.  Attach one now...");
-                window = message_window(stdscr, "No devices found",
-                    "No devices could be found that match the data in the "
-                    "state file.  If you haven't plugged the device in yet, go "
-                    "ahead and do so now.  Otherwise, you can hit Ctrl+C to "
-                    "abort the program.", 0);
-
+                window = no_matching_device_warning();
                 iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &program_options.device_name,
                                                  &device_stats.device_num, &fd);
 
                 if(iret == -1) {
-                    erase_and_delete_window(window);
-                    log_log("An error occurred while waiting for the device to be reconnected.");
-                    message_window(stdscr, ERROR_TITLE,
-                        "An error occurred while waiting for you to reconnect "
-                        "the device.", 1);
-
+                    wait_for_device_connect_error(window);
                     cleanup();
                     return -1;
                 } else {
@@ -2664,20 +2756,7 @@ int main(int argc, char **argv) {
         }
 
         if(fstat(fd, &fs)) {
-            local_errno = errno;
-            snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling fstat() on %s: %s\n", program_options.device_name, strerror(local_errno));
-            log_log(msg_buffer);
-            log_log("Unable to test -- unable to pull stats on the device.");
-
-            snprintf(msg_buffer, sizeof(msg_buffer),
-                "We won't be able to test %s because we weren't able to pull "
-                "stats on it.  The device may have been removed, or you may "
-                "not have permissions to open it.  (Make sure you're running "
-                "this program with sudo.)\n\nThis is the error we got while "
-                "trying to call fstat(): %s",
-                program_options.device_name, strerror(local_errno));
-            message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+            fstat_error(errno);
             cleanup();
             return -1;
         }
@@ -2699,18 +2778,7 @@ int main(int argc, char **argv) {
 
         if(stat(program_options.device_name, &fs)) {
             local_errno = errno;
-            snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(local_errno));
-            log_log(msg_buffer);
-            log_log("Unable to test -- unable to pull stats on the device.");
-            snprintf(msg_buffer, sizeof(msg_buffer),
-                "We won't be able to test this device because we were unable "
-                "to pull stats on %s.  The device may have been removed, or "
-                "you may not have permissions to open it.  (Make sure you're "
-                "running this program with sudo.)\n\nThis is the error we got "
-                "while trying to call stat(): %s",
-                program_options.device_name, strerror(local_errno));
-            message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+            stat_error(local_errno);
             cleanup();
             return -1;
         }
@@ -2718,31 +2786,14 @@ int main(int argc, char **argv) {
         if(!S_ISBLK(fs.st_mode)) {
             snprintf(msg_buffer, sizeof(msg_buffer), "Unable to test -- %s is not a block device", program_options.device_name);
             log_log(msg_buffer);
-            snprintf(msg_buffer, sizeof(msg_buffer),
-                "We won't be able to test with %s because it isn't a block "
-                "device.  You must provide a block device to test with.",
-                program_options.device_name);
-            message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+            not_a_block_device_error();
             cleanup();
             return -1;
         }
 
         if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
             local_errno = errno;
-            snprintf(msg_buffer, sizeof(msg_buffer), "Failed to open %s: %s", program_options.device_name, strerror(local_errno));
-            log_log(msg_buffer);
-            log_log("Unable to test -- couldn't open device.  Make sure you run this program as sudo.");
-
-            snprintf(msg_buffer, sizeof(msg_buffer),
-                "We won't be able to test %s because we couldn't open the "
-                "device.  The device might have gone away, or you might not "
-                "have permissions to open it.  (Make sure you run this program "
-                "as sudo.)\n\nHere's the error we got while trying to open the "
-                "device: %s",
-                program_options.device_name, strerror(local_errno));
-            message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+            device_open_error(local_errno);
             cleanup();
             return -1;
         }
@@ -2751,16 +2802,7 @@ int main(int argc, char **argv) {
     if(ioctl(fd, BLKGETSIZE64, &device_stats.reported_size_bytes) || ioctl(fd, BLKSSZGET, &device_stats.sector_size) ||
         ioctl(fd, BLKSECTGET, &max_sectors_per_request) || ioctl(fd, BLKPBSZGET, &device_stats.physical_sector_size)) {
         local_errno = errno;
-        snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(local_errno));
-        log_log(msg_buffer);
-
-        snprintf(msg_buffer, sizeof(msg_buffer),
-            "We won't be able to test %s because we couldn't pull stats on the "
-            "device.\n\nHere's the error we got while trying to open the "
-            "device: %s",
-            program_options.device_name, strerror(local_errno));
-        message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-
+        ioctl_error(local_errno);
         cleanup();
         return -1;
     }
