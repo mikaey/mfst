@@ -19,6 +19,16 @@
 // A buffer for assembling messages
 static char message_buffer[256];
 
+int is_block_device(char *filename) {
+    struct stat fs;
+
+    if(stat(filename, &fs)) {
+        return -1;
+    }
+
+    return S_ISBLK(fs.st_mode);
+}
+
 int did_device_disconnect(dev_t device_num) {
     const char *syspath, *device_size_str;
     size_t device_size;

@@ -151,4 +151,14 @@ int can_reset_device(dev_t device_num);
  */
 int reset_device(int device_fd);
 
+/**
+ * Indicates whether the specified device is a block device.
+ *
+ * @param filename  The name of the device to query.
+ *
+ * @returns Non-zero if the device is a block device, 0 if the device is not a
+ *          block device, or -1 if an error occurred.
+ */
+int is_block_device(char *filename);
+
 #endif // !defined(DEVICE_H)

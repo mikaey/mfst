@@ -2776,16 +2776,11 @@ int main(int argc, char **argv) {
             }
         }
 
-        if(stat(program_options.device_name, &fs)) {
-            local_errno = errno;
-            stat_error(local_errno);
+        if((ret = is_block_device(program_options.device_name)) == -1) {
+            stat_error(errno);
             cleanup();
             return -1;
-        }
-
-        if(!S_ISBLK(fs.st_mode)) {
-            snprintf(msg_buffer, sizeof(msg_buffer), "Unable to test -- %s is not a block device", program_options.device_name);
-            log_log(msg_buffer);
+        } else if(!ret) {
             not_a_block_device_error();
             cleanup();
             return -1;
