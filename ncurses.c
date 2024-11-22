@@ -206,7 +206,7 @@ int handle_key_inputs(WINDOW *curwin) {
             mvwin(curwin, (LINES - height) / 2, (COLS - width) / 2);
         }
 
-        erase();
+        clear();
         redraw_screen();
 
         if(curwin) {
