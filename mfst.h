@@ -326,6 +326,7 @@
 #define LOAD_STATE_LOAD_ERROR 3
 
 // Bit flags for the sector map
+#define SECTOR_MAP_FLAG_DO_NOT_USE         0x10
 #define SECTOR_MAP_FLAG_FAILED_THIS_ROUND  0x08
 #define SECTOR_MAP_FLAG_READ_THIS_ROUND    0x04
 #define SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND 0x02
@@ -339,6 +340,29 @@
  * @param msg       The null-terminated string to write to the log file.
  */
 void log_log(char *msg);
+
+/**
+ * Returns the maximum number of contiguous writable sectors that can be written
+ * starting from the given starting_sector, up to a max of max_sectors.
+ * "Writable sectors" are those sectors that have not been previously marked bad
+ * due to unrecoverable I/O errors.
+ *
+ * @param starting_sector  The sector number at which to start searching.
+ * @param max_sectors      The maximum number of sectors to search.
+ *
+ * @returns The maximum number of contiguous sectors that can be written
+ *          starting from starting_sector (which may be 0).
+ */
+uint64_t get_max_writable_sectors(uint64_t starting_sector, uint64_t max_sectors);
+
+/**
+ * Returns the maximum number of contiguous sectors that have been marked as
+ * "unwritable", starting from the given starting_sector, up to a max of
+ * max_sectors.  A sector is marked "unwritable" if a previous read attempt
+ * resulted in I/O errors that were not resolved by the program's various retry
+ * mechanisms.
+ */
+uint64_t get_max_unwritable_sectors(uint64_t starting_sector, uint64_t max_sectors);
 
 /**
  * Decodes the UUID embedded in the sector data (specified by data) and places

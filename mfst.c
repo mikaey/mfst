@@ -173,8 +173,11 @@ void stats_log(uint64_t rounds, uint64_t bad_sectors) {
  * @param with_diamond  Non-zero to indicate that a diamond should be drawn in
  *                      the block, or 0 to indicate that it should be an empty
  *                      block.
+ * @param with_x        Non-zero to indicate that an X should be drawn in the
+ *                      block, or 0 to indicate that it should be an empty
+ *                      block.
  */
-void draw_sector(uint64_t sector_num, int color, int with_diamond) {
+void draw_sector(uint64_t sector_num, int color, int with_diamond, int with_x) {
     int block_num, row, col;
 
     if(program_options.no_curses) {
@@ -194,6 +197,8 @@ void draw_sector(uint64_t sector_num, int color, int with_diamond) {
 
     if(with_diamond) {
         mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ACS_DIAMOND);
+    } else if(with_x) {
+        mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, 'X');
     } else {
         mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ' ');
     }
@@ -216,6 +221,7 @@ void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
     char cur_block_has_bad_sectors;
     int color;
     int this_round;
+    int unwritable;
 
     min = start_sector / sector_display.sectors_per_block;
     max = (end_sector / sector_display.sectors_per_block) + ((end_sector % sector_display.sectors_per_block) ? 1 : 0);
@@ -240,12 +246,14 @@ void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
         }
 
         this_round = 0;
+        unwritable = 0;
 
         for(j = i * sector_display.sectors_per_block; j < ((i * sector_display.sectors_per_block) + num_sectors_in_cur_block); j++) {
             cur_block_has_bad_sectors |= sector_display.sector_map[j] & SECTOR_MAP_FLAG_FAILED;
             num_written_sectors += (sector_display.sector_map[j] & SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND) >> 1;
             num_read_sectors += (sector_display.sector_map[j] & SECTOR_MAP_FLAG_READ_THIS_ROUND) >> 2;
             this_round |= sector_display.sector_map[j] & SECTOR_MAP_FLAG_FAILED_THIS_ROUND;
+            unwritable |= sector_display.sector_map[j] & SECTOR_MAP_FLAG_DO_NOT_USE;
         }
 
         if(cur_block_has_bad_sectors) {
@@ -264,7 +272,7 @@ void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
             color = BLACK_ON_WHITE;
         }
 
-        draw_sector(i * sector_display.sectors_per_block, color, this_round);
+        draw_sector(i * sector_display.sectors_per_block, color, this_round, unwritable);
     }
 }
 
@@ -2150,15 +2158,13 @@ void posix_memalign_error(int errnum) {
 
 void reset_sector_map() {
     for(uint64_t j = 0; j < device_stats.num_sectors; j++) {
-        sector_display.sector_map[j] &= SECTOR_MAP_FLAG_FAILED;
+        sector_display.sector_map[j] &= SECTOR_MAP_FLAG_DO_NOT_USE | SECTOR_MAP_FLAG_FAILED;
     }
-
-    // dispatch_sector_map_info_param_event(EVENT_INFO_SECTOR_MAP_RESET, device_stats.num_sectors, device_stats.sector_size, 1, sector_display.sector_map);
 }
 
 void reset_sector_map_partial(uint64_t start, uint64_t end) {
     for(uint64_t j = start; j < end; j++) {
-        sector_display.sector_map[j] &= SECTOR_MAP_FLAG_FAILED;
+        sector_display.sector_map[j] &= SECTOR_MAP_FLAG_DO_NOT_USE | SECTOR_MAP_FLAG_FAILED;
     }
 }
 
@@ -2380,6 +2386,24 @@ void no_working_gettimeofday(int errnum) {
     message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+uint64_t get_max_writable_sectors(uint64_t starting_sector, uint64_t max_sectors) {
+    uint64_t out = 0;
+
+    for(out = 0; out < max_sectors && !(sector_display.sector_map[starting_sector + out] & SECTOR_MAP_FLAG_DO_NOT_USE); out++);
+    return out;
+}
+
+uint64_t get_max_unwritable_sectors(uint64_t starting_sector, uint64_t max_sectors) {
+    uint64_t out = 0;
+
+    for(out = 0; out < max_sectors && (sector_display.sector_map[starting_sector + out] & SECTOR_MAP_FLAG_DO_NOT_USE); out++);
+    return out;
+}
+
+void mark_sector_unwritable(uint64_t sector_num) {
+    sector_display.sector_map[sector_num] |= SECTOR_MAP_FLAG_DO_NOT_USE;
+}
+
 void device_locate_error() {
     log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
     message_window(stdscr, ERROR_TITLE,
@@ -2496,7 +2520,7 @@ void save_state_error() {
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
-    uint64_t bytes_left_to_write, ret, cur_sector, middle_of_device;
+    uint64_t bytes_left_to_write, ret, cur_sector, middle_of_device, num_sectors_to_write;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
@@ -3142,30 +3166,108 @@ int main(int argc, char **argv) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
 
-                    if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), &device_was_disconnected)) == -1) {
-                        if(fd == -1) {
-                            main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                                ABORT_REASON_WRITE_ERROR);
+                    num_sectors_to_write = get_max_writable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
+                    if(num_sectors_to_write) {
+                        if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), &device_was_disconnected)) == -1) {
+                            if(fd == -1) {
+                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                    ABORT_REASON_WRITE_ERROR);
 
-                            cleanup();
-                            return 0;
-                        } else {
-                            // Mark this sector bad and skip over it
-                            if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Write error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                log_log(msg_buffer);
+                                cleanup();
+                                return 0;
+                            } else {
+                                // Mark this sector bad and skip over it
+                                if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
+                                    snprintf(msg_buffer, sizeof(msg_buffer), "Write error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                    log_log(msg_buffer);
+                                }
+
+                                mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+
+                                if(device_was_disconnected) {
+                                  restart_slice = 1;
+                                  break;
+                                }
+
+                                bytes_left_to_write -= device_stats.sector_size;
+
+                                if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
+                                    // Give up if we can't seek
+                                    main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                                    cleanup();
+                                    return 0;
+                                }
+
+                                continue;
+                            }
+                        }
+
+                        if(device_was_disconnected) {
+                            restart_slice = 1;
+                            break;
+                        }
+
+                        // Do we need to update the BOD buffer?
+                        if(((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write)) < BOD_MOD_BUFFER_SIZE) {
+                            memcpy(
+                                bod_buffer + (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write),
+                                buf + (cur_block_size - bytes_left_to_write),
+                                ((cur_sector * device_stats.sector_size) + ret) > BOD_MOD_BUFFER_SIZE ?
+                                BOD_MOD_BUFFER_SIZE - (cur_sector * device_stats.sector_size) : ret
+                            );
+
+                            // If we updated the BOD buffer, we also need to
+                            // savestate.
+                            if(save_state()) {
+                                log_log("Error creating save state, disabling save stating");
+                                message_window(stdscr, WARNING_TITLE,
+                                    "An error occurred while trying to save the "
+                                    "program state.  Save stating has been "
+                                    "disabled.", 1);
+
+                                free(program_options.state_file);
+                                program_options.state_file = NULL;
                             }
 
-                            mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                        }
 
-                            if(device_was_disconnected) {
-                              restart_slice = 1;
-                              break;
+                        // Do we need to update the MOD buffer?
+                        if(((cur_sector * device_stats.sector_size) >= middle_of_device) && (((cur_sector * device_stats.sector_size) +
+                            (cur_block_size - bytes_left_to_write)) < (middle_of_device + BOD_MOD_BUFFER_SIZE))) {
+                            memcpy(
+                                mod_buffer + ((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write) - middle_of_device),
+                                buf + (cur_block_size - bytes_left_to_write),
+                                ((cur_sector * device_stats.sector_size) + ret) > (middle_of_device + BOD_MOD_BUFFER_SIZE) ?
+                                BOD_MOD_BUFFER_SIZE - ((cur_sector * device_stats.sector_size) - middle_of_device) : ret
+                            );
+
+                            // If we updated the MOD buffer, we also need to
+                            // savestate.
+                            if(save_state()) {
+                                log_log("Error creating save state, disabling save stating");
+                                message_window(stdscr, WARNING_TITLE,
+                                    "An error occurred while trying to save the "
+                                    "program state.  Save stating has been "
+                                    "disabled.", 1);
+
+                                free(program_options.state_file);
+                                program_options.state_file = NULL;
                             }
+                        }
 
-                            bytes_left_to_write -= device_stats.sector_size;
+                        bytes_left_to_write -= ret;
+                        device_stats.bytes_since_last_status_update += ret;
+                        state_data.bytes_written += ret;
+                    }
 
+                    if(bytes_left_to_write) {
+                        num_sectors_to_write = get_max_unwritable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
+                        if(num_sectors_to_write) {
+                            bytes_left_to_write -= num_sectors_to_write * device_stats.sector_size;
+
+                            // Seek past the unwritable sectors
                             if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
                                 // Give up if we can't seek
                                 main_thread_status = MAIN_THREAD_STATUS_ENDING;
@@ -3173,67 +3275,8 @@ int main(int argc, char **argv) {
                                 cleanup();
                                 return 0;
                             }
-
-                            continue;
                         }
                     }
-
-                    if(device_was_disconnected) {
-                        restart_slice = 1;
-                        break;
-                    }
-
-                    // Do we need to update the BOD buffer?
-                    if(((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write)) < BOD_MOD_BUFFER_SIZE) {
-                        memcpy(
-                            bod_buffer + (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write),
-                            buf + (cur_block_size - bytes_left_to_write),
-                            ((cur_sector * device_stats.sector_size) + ret) > BOD_MOD_BUFFER_SIZE ?
-                            BOD_MOD_BUFFER_SIZE - (cur_sector * device_stats.sector_size) : ret
-                        );
-
-                        // If we updated the BOD buffer, we also need to
-                        // savestate.
-                        if(save_state()) {
-                            log_log("Error creating save state, disabling save stating");
-                            message_window(stdscr, WARNING_TITLE,
-                                "An error occurred while trying to save the "
-                                "program state.  Save stating has been "
-                                "disabled.", 1);
-
-                            free(program_options.state_file);
-                            program_options.state_file = NULL;
-                        }
-
-                    }
-
-                    // Do we need to update the MOD buffer?
-                    if(((cur_sector * device_stats.sector_size) >= middle_of_device) && (((cur_sector * device_stats.sector_size) + 
-                        (cur_block_size - bytes_left_to_write)) < (middle_of_device + BOD_MOD_BUFFER_SIZE))) {
-                        memcpy(
-                            mod_buffer + ((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write) - middle_of_device),
-                            buf + (cur_block_size - bytes_left_to_write),
-                            ((cur_sector * device_stats.sector_size) + ret) > (middle_of_device + BOD_MOD_BUFFER_SIZE) ?
-                            BOD_MOD_BUFFER_SIZE - ((cur_sector * device_stats.sector_size) - middle_of_device) : ret
-                        );
-
-                        // If we updated the MOD buffer, we also need to
-                        // savestate.
-                        if(save_state()) {
-                            log_log("Error creating save state, disabling save stating");
-                            message_window(stdscr, WARNING_TITLE,
-                                "An error occurred while trying to save the "
-                                "program state.  Save stating has been "
-                                "disabled.", 1);
-
-                            free(program_options.state_file);
-                            program_options.state_file = NULL;
-                        }
-                    }
-
-                    bytes_left_to_write -= ret;
-                    device_stats.bytes_since_last_status_update += ret;
-                    state_data.bytes_written += ret;
 
                     print_status_update();
                 }
@@ -3320,24 +3363,50 @@ int main(int argc, char **argv) {
                     handle_key_inputs(NULL);
                     wait_for_file_lock(NULL);
 
-                    if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR))) == -1) {
-                        if(fd == -1) {
-                            main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                                ABORT_REASON_READ_ERROR);
+                    num_sectors_to_write = get_max_writable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
+                    if(num_sectors_to_read) {
+                        if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR))) == -1) {
+                            if(fd == -1) {
+                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                    ABORT_REASON_READ_ERROR);
 
-                            cleanup();
-                            return 0;
-                        } else {
-                            // Mark this sector as bad and skip over it
-                            if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Read error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                log_log(msg_buffer);
+                                cleanup();
+                                return 0;
+                            } else {
+                                // Mark this sector as bad and skip over it
+                                if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
+                                    snprintf(msg_buffer, sizeof(msg_buffer), "Read error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                    log_log(msg_buffer);
+                                }
+
+                                mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
+                                bytes_left_to_write -= device_stats.sector_size;
+
+                                if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
+                                    // Give up if we can't seek
+                                    main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                                    cleanup();
+                                    return 0;
+                                }
+
+                                continue;
                             }
+                        }
 
-                            mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                            bytes_left_to_write -= device_stats.sector_size;
+                        bytes_left_to_write -= ret;
+                        device_stats.bytes_since_last_status_update += ret;
+                        sectors_read += ret / device_stats.sector_size;
+                    }
 
+                    if(bytes_left_to_write) {
+                        num_sectors_to_write = get_max_unwritable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
+                        if(num_sectors_to_write) {
+                            memset(compare_buf + (cur_block_size - bytes_left_to_write), 0, num_sectors_to_write * device_stats.sector_size);
+                            bytes_left_to_write -= num_sectors_to_write * device_stats.sector_size;
+
+                            // Seek past the unwritable sectors
                             if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
                                 // Give up if we can't seek
                                 main_thread_status = MAIN_THREAD_STATUS_ENDING;
@@ -3345,14 +3414,8 @@ int main(int argc, char **argv) {
                                 cleanup();
                                 return 0;
                             }
-
-                            continue;
                         }
                     }
-
-                    bytes_left_to_write -= ret;
-                    device_stats.bytes_since_last_status_update += ret;
-                    sectors_read += ret / device_stats.sector_size;
 
                     print_status_update();
                 }

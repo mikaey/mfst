@@ -154,6 +154,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     size_t partial_match_threshold;
     int ret;
     int sector_size;
+    uint64_t num_sectors_to_read;
 
     if(!(read_buffer = malloc(bod_mod_buffer_size))) {
         snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data: malloc() failed: %m");
@@ -180,18 +181,36 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     // Read in the first 1MB.
     bytes_left_to_read = bod_mod_buffer_size;
     while(bytes_left_to_read) {
-        if((ret = read(fd, read_buffer + (bod_mod_buffer_size - bytes_left_to_read), bytes_left_to_read)) == -1) {
-            // If we get a read error here, we'll just zero out the rest of the sector and move on.
-            memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512));
-            bytes_left_to_read -= ((bytes_left_to_read % 512) == 0) ? 512 : (bytes_left_to_read % 512);
+        num_sectors_to_read = get_max_writable_sectors((bod_mod_buffer_size - bytes_left_to_read) / device_stats.sector_size, bytes_left_to_read / device_stats.sector_size);
+        if(num_sectors_to_read) {
+            if((ret = read(fd, read_buffer + (bod_mod_buffer_size - bytes_left_to_read), (num_sectors_to_read * device_stats.sector_size) + (bytes_left_to_read % device_stats.sector_size))) == -1) {
+                // If we get a read error here, we'll just zero out the rest of the sector and move on.
+                memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size));
+                bytes_left_to_read -= ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size);
+                if(lseek(fd, bod_mod_buffer_size - bytes_left_to_read, SEEK_SET) == -1) {
+                    snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
+                    log_log(message_buffer);
+                    free(read_buffer);
+                    return -1;
+                }
+            } else {
+                bytes_left_to_read -= ret;
+            }
+        }
+
+        // For unwritable sectors, just zero out the read buffer
+        num_sectors_to_read = get_max_unwritable_sectors((bod_mod_buffer_size - bytes_left_to_read) / device_stats.sector_size, bytes_left_to_read / device_stats.sector_size);
+        if(num_sectors_to_read) {
+            memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, num_sectors_to_read * device_stats.sector_size);
+            bytes_left_to_read -= num_sectors_to_read * device_stats.sector_size;
+
+            // Seek past the bad sectors
             if(lseek(fd, bod_mod_buffer_size - bytes_left_to_read, SEEK_SET) == -1) {
                 snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
                 log_log(message_buffer);
                 free(read_buffer);
                 return -1;
             }
-        } else {
-            bytes_left_to_read -= ret;
         }
     }
 

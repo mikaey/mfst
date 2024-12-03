@@ -36,6 +36,7 @@ int save_state() {
     char *sector_map, *b64str;
     char device_uuid[37];
     size_t i, j;
+    int version = 2;
 
     // If no state file was specified, do nothing
     if(!program_options.state_file) {
@@ -46,6 +47,14 @@ int save_state() {
     // value is if something goes wrong...so I'm just assuming that nothing
     // *can* go wrong.  Totally a good idea, right?
     root = json_object_new_object();
+
+    // Write the spec version out to the file
+    obj = json_object_new_int(version);
+    if(json_object_object_add(root, "version", obj)) {
+        json_object_put(obj);
+        json_object_put(root);
+        return -1;
+    }
 
     // Write the device UUID out to the file
     uuid_unparse(device_stats.device_uuid, device_uuid);
@@ -225,24 +234,25 @@ int save_state() {
     //
     // The sector map has info on whether each sector has been read/written in
     // this round, as well as whether each sector has experienced an error.
-    // Really all we're concerned about is the bad sector flag -- so to save
-    // space, we'll compact that info down into a bitfield.  In the serialized
-    // version of the bitmap, each byte will represent 8 sectors, with the
-    // first sector being in the most significant bit and the last sector being
-    // in the least significant bit.
-    sector_map = (char *) malloc((device_stats.num_sectors / 8) + ((device_stats.num_sectors % 8) ? 1 : 0));
-    for(i = 0; i < device_stats.num_sectors; i += 8) {
-        sector_map[i / 8] = 0;
-        for(j = 0; j < 8; j++) {
+    // Really all we're concerned about is the bad sector flag and the
+    // unwritable flag -- so to save space, we'll compact that info down into a
+    // bitfield.  In the serialized version of the bitmap, each byte will
+    // represent 4 sectors, with the first sector being in the two most
+    // significant bits and the last sector being in the least two significant
+    // bits.
+    sector_map = (char *) malloc((device_stats.num_sectors / 4) + ((device_stats.num_sectors % 4) ? 1 : 0));
+    for(i = 0; i < device_stats.num_sectors; i += 4) {
+        sector_map[i / 4] = 0;
+        for(j = 0; j < 4; j++) {
             if((i + j) < device_stats.num_sectors) {
-                sector_map[i / 8] = (sector_map[i / 8] << 1) | (sector_display.sector_map[i + j] & 0x01);
+                sector_map[i / 4] = (sector_map[i / 4] << 2) | ((sector_display.sector_map[i + j] & 0x10) >> 3) | (sector_display.sector_map[i + j] & 0x01);
             } else {
-                sector_map[i / 8] <<= 1;
+                sector_map[i / 4] <<= 2;
             }
         }
     }
 
-    b64str = base64_encode(sector_map, (device_stats.num_sectors / 8) + ((device_stats.num_sectors % 8) ? 1 : 0), NULL);
+    b64str = base64_encode(sector_map, (device_stats.num_sectors / 4) + ((device_stats.num_sectors % 4) ? 1 : 0), NULL);
     free(sector_map);
 
     if(!b64str) {
@@ -382,12 +392,13 @@ int load_state() {
     struct stat statbuf;
     struct json_object *root, *obj;
     char str[256];
-    int i;
+    int i, version = 1;
     char *buffer;
     size_t detected_size, sector_size, k, l;
     char *uuid_str = NULL;
 
     // A bunch of constants for the JSON pointers to our JSON object
+    const char *version_ptr = "/version";
     const char *device_uuid_ptr = "/device_uuid";
     const char *reported_size_ptr = "/device_geometry/reported_size";
     const char *detected_size_ptr = "/device_geometry/detected_size";
@@ -413,6 +424,7 @@ int load_state() {
     const char *tfpfr_ptr = "/state/twenty_five_percent_failure_round";
 
     const char *all_props[] = {
+        version_ptr,
         device_uuid_ptr,
         reported_size_ptr,
         detected_size_ptr,
@@ -440,6 +452,7 @@ int load_state() {
     };
 
     const json_type prop_types[] = {
+        json_type_int,     // version_ptr
         json_type_string,  // device_uuid_ptr
         json_type_int,     // reported_size_ptr
         json_type_int,     // detected_size_ptr
@@ -466,6 +479,7 @@ int load_state() {
     };
 
     const int required_props[] = {
+        0, // version_ptr
         0, // device_uuid_ptr
         1, // reported_size_ptr
         1, // detected_size_ptr
@@ -492,6 +506,7 @@ int load_state() {
     };
 
     const int base64_props[] = {
+        0, // version_ptr
         0, // device_uuid_ptr
         0, // reported_size_ptr
         0, // detected_size_ptr
@@ -518,6 +533,7 @@ int load_state() {
     };
 
     char *buffers[] = {
+        NULL, // version_ptr
         NULL, // device_uuid_ptr
         NULL, // reported_size_ptr
         NULL, // detected_size_ptr
@@ -544,6 +560,7 @@ int load_state() {
     };
 
     size_t buffer_lens[] = {
+        0, // version_ptr
         0, // device_uuid_ptr,
         0, // reported_size_ptr
         0, // detected_size_ptr
@@ -570,6 +587,7 @@ int load_state() {
     };
 
     void *destinations[] = {
+        &version,
         &uuid_str,
         &device_stats.reported_size_bytes,
         &device_stats.detected_size_bytes,
@@ -704,13 +722,15 @@ int load_state() {
                 detected_size = json_object_get_uint64(obj);
             } else if(all_props[i] == sector_size_ptr) {
                 sector_size = json_object_get_uint64(obj);
+            } else if(all_props[i] == version_ptr) {
+                version = json_object_get_int(obj);
             }
-
         }
     }
 
     // Make sure our Base64-encoded strings are the correct length.
     size_t expected_lens[] = {
+        -1,                  // version_ptr
         -1,                  // device_uuid_ptr
         -1,                  // reported_size_ptr
         -1,                  // detected_size_ptr
@@ -726,7 +746,7 @@ int load_state() {
         -1,                  // lock_file_ptr
         -1,                  // stats_interval_ptr
                              // sector_map_ptr
-        (detected_size / sector_size) / 8 + (((detected_size / sector_size) % 8) ? 1 : 0),
+        version >= 2 ? ((detected_size / sector_size) / 4 + (((detected_size / sector_size) % 4) ? 1 : 0)) : ((detected_size / sector_size) / 8 + (((detected_size / sector_size) % 8) ? 1 : 0)),
         BOD_MOD_BUFFER_SIZE, // bod_data_ptr
         BOD_MOD_BUFFER_SIZE, // mod_data_ptr
         -1,                  // rounds_completed_ptr
@@ -790,10 +810,20 @@ int load_state() {
                 free(buffers[i]);
             } else if(all_props[i] == sector_map_ptr) {
                 // We need to unpack the sector map
-                for(k = 0; k < buffer_lens[i]; k++) {
-                    for(l = 0; l < 8; l++) {
-                        if((k + l) < buffer_lens[i]) {
-                            sector_display.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
+                if(version >= 2) {
+                    for(k = 0; k < buffer_lens[i]; k++) {
+                        for(l = 0; l < 4; l++) {
+                            if((k + l) < buffer_lens[i]) {
+                                sector_display.sector_map[(k * 4) + l] = (((buffers[i][k] >> (((3 - l) * 2) + 1)) & 0x01) << 3) | ((buffers[i][k] >> ((3 - l) * 2)) & 0x01);
+                            }
+                        }
+                    }
+                } else {
+                    for(k = 0; k < buffer_lens[i]; k++) {
+                        for(l = 0; l < 8; l++) {
+                            if((k + l) < buffer_lens[i]) {
+                                sector_display.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
+                            }
                         }
                     }
                 }
