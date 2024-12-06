@@ -551,6 +551,7 @@ int find_device(char   * preferred_dev_name,
 
             free(matched_devices);
 
+            errno = ENOMEM;
             return -1;
         }
     } else {
@@ -579,6 +580,8 @@ int find_device(char   * preferred_dev_name,
             log_log("find_device(): udev_enumerate_add_match_subsystem() failed");
             udev_enumerate_unref(udev_enum);
             udev_unref(udev_handle);
+            free_matched_devices();
+
             errno = ELIBACC;
             return -1;
         }
@@ -710,8 +713,7 @@ int find_device(char   * preferred_dev_name,
                 udev_device_unref(device);
                 udev_enumerate_unref(udev_enum);
                 udev_unref(udev_handle);
-
-                free(matched_devices);
+                free_matched_devices();
 
                 errno = ENOMEM;
                 return -1;
@@ -1088,7 +1090,7 @@ int reset_device(int device_fd) {
     } else if(ret > 1) {
         // There is an edge case where two identical devices start a round at
         // the same time, the random seeds end up being the same, and as a
-        // result, they end up having the same BOD/MOD data.  At some poiont I
+        // result, they end up having the same BOD/MOD data.  At some point I
         // need to do something like prompt the user to fix this by selecting
         // the right device or waiting for the other device(s) BOD/MOD data to
         // change on its own (e.g., if another process is testing the device).
