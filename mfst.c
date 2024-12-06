@@ -836,6 +836,7 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
     uint64_t block_size, bytes_left, block_bytes_left;
     char *aligned_buf;
     int64_t ret;
+    int iret;
 
     if(ret = posix_memalign((void **) &aligned_buf, sysconf(_SC_PAGESIZE), len)) {
         return -1;
@@ -850,7 +851,10 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
             // Make sure the data is in an aligned buffer
             memcpy(aligned_buf, ((char *) buf) + (len - bytes_left), block_bytes_left);
             if((ret = write(fd, aligned_buf, block_bytes_left)) == -1) {
+                // In case free() modifies errno
+                iret = errno;
                 free(aligned_buf);
+                errno = iret;
                 return -1;
             }
 
