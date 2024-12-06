@@ -1028,9 +1028,8 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                 // Are we at the beginning of the device?
                 if(i == 0) {
                     // Are we at the very first block?
+                    multifree(2, buf, readbuf);
                     if(j == 0) {
-                        multifree(2, buf, readbuf);
-
                         log_log("probe_device_size(): Unable to determine device size: first sector isn't stable");
                         erase_and_delete_window(window);
                         message_window(stdscr, WARNING_TITLE,
