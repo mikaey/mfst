@@ -2,6 +2,7 @@
 #define DEVICE_H
 
 #include <libudev.h>
+#include <uuid/uuid.h>
 
 /**
  * Tries to determine whether the device was disconnected from the system.
@@ -52,6 +53,10 @@ int did_device_disconnect(dev_t device_num);
  *                              expected to be present at the middle of the
  *                              device.
  * @param bod_mod_buffer_size   The size of bod_buffer and mod_buffer, in bytes.
+ * @param expected_device_uuid  The device UUID, or null if the device UUID
+ *                              should not be checked.
+ * @param sector_map            A pointer to the current sector map for the
+ *                              expected device.
  * @param matched_dev_name      A pointer to a char * that will receive the name
  *                              of the matched device.  Memory for this string
  *                              is allocated using malloc() and must be freed
@@ -85,6 +90,8 @@ int find_device(char   * preferred_dev_name,
                 char   * bod_buffer,
                 char   * mod_buffer,
                 size_t   bod_mod_buffer_size,
+                uuid_t   expected_device_uuid,
+                char   * sector_map,
                 char   **matched_dev_name,
                 dev_t  * matched_dev_num,
                 int    * newfd);
@@ -108,6 +115,10 @@ int find_device(char   * preferred_dev_name,
  *                              device.
  * @param bod_mod_buffer_size   The number of bytes in bod_buffer and mod_buffer
  *                              (each).
+ * @param expected_device_uuid  The device UUID, or null if the device UUID
+ *                              should not be checked.
+ * @param sector_map            A pointer to the current sector map for the
+ *                              expected device.
  * @param matched_dev_name      A pointer to a char * that will receive the name
  *                              of the matched device.  Note that the memory for
  *                              the new string will be allocated using malloc()
@@ -127,6 +138,8 @@ int wait_for_device_reconnect(size_t   expected_device_size,
                               char   * bod_buffer,
                               char   * mod_buffer,
                               size_t   bod_mod_buffer_size,
+                              uuid_t   expected_device_uuid,
+                              char   * sector_map,
                               char   **matched_dev_name,
                               dev_t  * matched_dev_num,
                               int    * newfd);

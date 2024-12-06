@@ -11,8 +11,10 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "crc32.h"
 #include "device.h"
 #include "mfst.h"
 
@@ -303,6 +305,140 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     return 1;
 }
 
+/**
+ * Reads 4,096 random sectors from the device and extracts the UUID embedded in
+ * the sector data and compares it to the expected UUID (provided in
+ * expected_device_uuid).  Returns a success if at least half the sectors read
+ * contained UUIDs that matched the expected UUID.
+ *
+ * @param fd                    A handle to the device to be queried.
+ * @param device_size           The size of the device, in bytes.
+ * @param expected_device_uuid  The expected device UUID.
+ * @param sector_data           A pointer to a buffer containing the current
+ *                              sector map.
+ *
+ * @returns 0 if at least half of the UUIDs read match the expected UUID, 1 if
+ *          less than half the UUIDs read did not match the expected UUID, or -1
+ *          if an error occurred (including if the sector map does not contain
+ *          at least 4,096 good sectors).
+ */
+int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uuid, char *sector_map) {
+    int num_matching_sectors = 0, i, j, sector_size;
+    uint64_t num_sectors, num_bad_sectors = 0, k;
+    int found;
+
+    const uint64_t num_sectors_to_check = 4096;
+    uint64_t sectors_to_check[num_sectors_to_check];
+    uint64_t cur_sector;
+    long a, b, c;
+
+    char *buffer;
+    uuid_t device_uuid;
+    int ret;
+    char msg[256];
+
+    // Get the device's sector size.
+    if(ioctl(fd, BLKSSZGET, &sector_size)) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_IOCTL_ERROR, strerror(errno));
+        free(buffer);
+        return -1;
+    }
+
+    num_sectors = device_size / sector_size;
+
+    // Count up how many bad sectors there are on the device
+    for(k = 0; k < num_sectors; k++) {
+        if(sector_map[k] & 0x01) {
+            num_bad_sectors++;
+        }
+    }
+
+    // If there aren't enough good sectors to query, give up now
+    if(num_sectors < (num_bad_sectors + num_sectors_to_check)) {
+        log_log("compare_device_uuids(): Not enough good sectors to check");
+        return -1;
+    }
+
+    if(!(buffer = malloc(sector_size))) {
+        snprintf(msg, sizeof(msg), "compare_device_uuids(): malloc() failed: %m");
+        log_log(msg);
+        return -1;
+    }
+
+    // Initialize the random number generator
+    srandom(time(NULL));
+
+    // Determine the list of sectors we're going to check
+    for(i = 0; i < num_sectors_to_check; ) {
+        // random() only generates 31 bits of random data, so let's do some
+        // fuckery to turn that into 64 bits
+        a = random();
+        b = random();
+        c = random();
+        cur_sector = ((((uint64_t) a) << 33) | (((uint64_t) b) << 2) | ((uint64_t) (c >> 29))) % num_sectors;
+
+        found = 0;
+        // Make sure the sector isn't already marked bad
+        if(sector_map[cur_sector] & 0x01) {
+            found = 1;
+        }
+
+        // Make sure the list of sesctors we're going to check is unique
+        for(j = 0; j < i && !found; j++) {
+            if(sectors_to_check[j] == cur_sector) {
+                found = 1;
+            }
+        }
+
+        if(!found) {
+            sectors_to_check[i++] = cur_sector;
+        }
+    }
+
+    // Ok, we have a list of sectors to check -- let's go!
+    for(i = 0; i < num_sectors_to_check && (num_matching_sectors + (num_sectors_to_check - i)) >= (num_sectors_to_check / 2); i++) {
+        if((ret = lseek(fd, sectors_to_check[i] * sector_size, SEEK_SET)) == -1) {
+            snprintf(msg, sizeof(msg), "compare_device_uuids(): lseek() failed: %m");
+            log_log(msg);
+            free(buffer);
+            return -1;
+        }
+
+        if((ret = read(fd, buffer, sector_size)) != sector_size) {
+            if(ret == -1) {
+                // Just skip over this sector
+                continue;
+            } else {
+                snprintf(msg, sizeof(msg), "compare_device_uuids(): read() returned %d bytes, expected %d bytes", ret, sector_size);
+                log_log(msg);
+                continue;
+            }
+        }
+
+        // Make sure the sector's CRC32 is correct
+        if(calculate_crc32c(0, buffer, sector_size)) {
+            continue;
+        }
+
+        get_embedded_device_uuid(buffer, device_uuid);
+        if(!memcmp(device_uuid, expected_device_uuid, sizeof(uuid_t))) {
+            if(++num_matching_sectors >= (num_sectors_to_check / 2)) {
+                free(buffer);
+
+                log_log("compare_device_uuids(): At least half of sectors matched the given UUID");
+                return 0;
+            }
+        }
+    }
+
+    free(buffer);
+
+    snprintf(msg, sizeof(msg), "compare_device_uuids(): Less than half of sectors had the correct UUID embedded in them (%d sectors matched)", num_matching_sectors);
+    log_log(msg);
+
+    return 1;
+}
+
 int find_device(char   * preferred_dev_name,
                 int      must_match,
                 size_t   expected_device_size,
@@ -310,6 +446,8 @@ int find_device(char   * preferred_dev_name,
                 char   * bod_buffer,
                 char   * mod_buffer,
                 size_t   bod_mod_buffer_size,
+                uuid_t   expected_device_uuid,
+                char   * sector_map,
                 char   **matched_dev_name,
                 dev_t  * matched_dev_num,
                 int    * newfd) {
@@ -363,10 +501,7 @@ int find_device(char   * preferred_dev_name,
             return 0;
         }
 
-        ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size);
-        close(fd);
-
-        if(ret) {
+        if(ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size)) {
             if(ret == -1) {
                 snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data", preferred_dev_name);
             } else {
@@ -374,7 +509,31 @@ int find_device(char   * preferred_dev_name,
             }
 
             log_log(message_buffer);
-            return 0;
+
+            // Try to match by the device UUID
+            if(expected_device_uuid) {
+                if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
+                    if(ret == -1) {
+                        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: an error occurred while searching for embedded UUIDs", preferred_dev_name);
+                    } else {
+                        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: embedded UUIDs don't match", preferred_dev_name);
+                    }
+                } else {
+                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing embedded UUIDs", preferred_dev_name);
+                }
+
+                log_log(message_buffer);
+            }
+
+            close(fd);
+
+            if(ret) {
+                return 0;
+            }
+        } else {
+            close(fd);
+            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing beginning-of-device and middle-of-device data", preferred_dev_name);
+            log_log(message_buffer);
         }
 
         // Add the device to our list of devices
@@ -488,20 +647,40 @@ int find_device(char   * preferred_dev_name,
                 continue;
             }
 
-            ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size);
-            close(fd);
-
-            if(ret) {
+            if(ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size)) {
                 if(ret == -1) {
-                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
+                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
                 } else {
-                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: beginning-of-device and middle-of-device data doesn't match what was provided", dev_name);
+                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: beginning-of-device and middle-of-device data don't match", dev_name);
                 }
 
                 log_log(message_buffer);
-                udev_device_unref(device);
-                list_entry = udev_list_entry_get_next(list_entry);
-                continue;
+
+                if(expected_device_uuid) {
+                    if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
+                        if(ret == -1) {
+                            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: an error occurred while searching for embedded UUIDs", dev_name);
+                        } else {
+                            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: embedded UUIDs don't match", dev_name);
+                        }
+                    } else {
+                        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing embedded UUIDs", dev_name);
+                    }
+                }
+
+                log_log(message_buffer);
+
+                close(fd);
+
+                if(ret) {
+                    udev_device_unref(device);
+                    list_entry = udev_list_entry_get_next(list_entry);
+                    continue;
+                }
+            } else {
+                close(fd);
+                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing beginning-of-device and middle-of-device data", dev_name);
+                log_log(message_buffer);
             }
 
             snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on device %s", dev_name);
@@ -586,11 +765,8 @@ int find_device(char   * preferred_dev_name,
         log_log(message_buffer);
         log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
 
-        for(i = 0; i < num_matches; i++) {
-            free(matched_devices[i]);
-        }
 
-        free(matched_devices);
+        free_matched_devices();
 
         errno = EINTR;
         return -1;
@@ -632,6 +808,8 @@ int wait_for_device_reconnect(size_t   expected_device_size,
                               char   * bod_buffer,
                               char   * mod_buffer,
                               size_t   bod_mod_buffer_size,
+                              uuid_t   expected_device_uuid,
+                              char   * sector_map,
                               char   **matched_dev_name,
                               dev_t  * matched_dev_num,
                               int    * newfd) {
@@ -721,20 +899,38 @@ int wait_for_device_reconnect(size_t   expected_device_size,
             }
 
             ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size);
-            close(fd);
 
             if(ret) {
                 if(ret == -1) {
                     snprintf(message_buffer, sizeof(message_buffer),
-                             "wait_for_device_reconnect(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
+                             "wait_for_device_reconnect(): Device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
                 } else {
                     snprintf(message_buffer, sizeof(message_buffer),
-                             "wait_for_device_reconnect(): Rejecting device %s: beginning-of-device and middle-of-device data doesn't match", dev_name);
+                             "wait_for_device_reconnect(): Device %s: beginning-of-device and middle-of-device data doesn't match", dev_name);
                 }
 
                 log_log(message_buffer);
-                udev_device_unref(device);
-                continue;
+
+                if(expected_device_uuid) {
+                    if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
+                        if(ret == -1) {
+                            snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Device %s: an error occurred while searching for embedded UUIDs", dev_name);
+                        } else {
+                            snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Device %s: embedded UUIDs don't match", dev_name);
+                        }
+                    } else {
+                        snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s by comparing embedded UUIDs", dev_name);
+                    }
+                }
+
+                close(fd);
+
+                if(ret) {
+                    udev_device_unref(device);
+                    continue;
+                }
+            } else {
+                close(fd);
             }
 
             // Ok, we have a match.  Get stats on the device.
@@ -879,11 +1075,13 @@ int reset_device(int device_fd) {
 
     close(fd);
 
-    ret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, &fd);
+    ret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
+                      sector_display.sector_map, &new_device_name, &new_device_num, &fd);
     if(ret == -1) {
       return -1;
     } else if(ret == 0) {
-        if(wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, &fd)) {
+        if(wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, sector_display.sector_map,
+                                     &new_device_name, &new_device_num, &fd)) {
             log_log("reset_device(): Error while waiting for device to reconnect");
             return -1;
         }

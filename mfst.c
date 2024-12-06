@@ -1860,7 +1860,7 @@ off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
                 log_log("retriable_lseek(): Device disconnected.  Waiting for device to be reconnected...");
                 window = device_disconnected_message();
 
-                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
+                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, &new_device_name, &new_device_num, fd);
 
                 if(iret == -1) {
                     log_log("retriable_lseek(): Failed to reconnect device!");
@@ -1949,7 +1949,7 @@ int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
             log_log("retriable_read(): Device disconnected.  Waiting for device to be reconnected...");
             window = device_disconnected_message();
 
-            iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
+            iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, &new_device_name, &new_device_num, fd);
 
             if(iret != -1) {
                 log_log("retriable_read(): Device reconnected.");
@@ -2058,7 +2058,7 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
                 log_log("retriable_write(): Device disconnected.  Waiting for device to be reconnected...");
                 window = device_disconnected_message();
 
-                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name, &new_device_num, fd);
+                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, &new_device_name, &new_device_num, fd);
 
                 if(iret != -1) {
                     log_log("retriable_write(): Device reconnected.");
@@ -2739,8 +2739,8 @@ int main(int argc, char **argv) {
         log_log("Attempting to locate device described in state file");
         window = message_window(stdscr, NULL, "Finding device described in state file...", 0);
 
-        iret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &new_device_name,
-                           &new_device_num, &fd);
+        iret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
+                           sector_display.sector_map, &new_device_name, &new_device_num, &fd);
 
         erase_and_delete_window(window);
 
@@ -2759,10 +2759,8 @@ int main(int argc, char **argv) {
                 return -1;
             } else {
                 window = no_matching_device_warning();
-                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, &program_options.device_name,
-                                                 &device_stats.device_num, &fd);
-
-                if(iret == -1) {
+                if(wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
+                                             sector_display.sector_map, &program_options.device_name, &device_stats.device_num, &fd) == -1) {
                     wait_for_device_connect_error(window);
                     cleanup();
                     return -1;
