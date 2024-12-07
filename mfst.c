@@ -1831,307 +1831,428 @@ WINDOW *resetting_device_message() {
                           "get the device working again.", 0);
 }
 
-off_t retriable_lseek(int *fd, off_t position, int *device_was_disconnected) {
-    int op_retry_count;
-    int reset_retry_count;
+int64_t lseek_or_reset_device(int *fd, off_t position, int *device_was_disconnected);
+
+int handle_device_disconnect(int *fd, off_t position, int seek_after_reconnect) {
+    WINDOW *window;
+    char *new_device_name;
+    dev_t new_device_num;
+    int ret;
+    main_thread_status_type previous_status = main_thread_status;
+
+    main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
+
+    if(*fd != -1) {
+        close(*fd);
+        *fd = -1;
+    }
+
+    window = device_disconnected_message(__func__);
+    ret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, sector_display.sector_map, &new_device_name, &new_device_num, fd);
+    handle_key_inputs(window);
+    main_thread_status = previous_status;
+
+    if(ret != -1) {
+        log_log("handle_device_disconnect(): Device reconnected.");
+
+        if(program_options.device_name) {
+            free(program_options.device_name);
+        }
+
+        program_options.device_name = new_device_name;
+        device_stats.device_num = new_device_num;
+
+        if(seek_after_reconnect) {
+            if(lseek_or_reset_device(fd, position, NULL) == -1) {
+                log_log("handle_device_disconnect(): Failed to seek to previous position after reopening device");
+
+                erase_and_delete_window(window);
+                redraw_screen();
+
+                return -1;
+            }
+        }
+
+        erase_and_delete_window(window);
+        redraw_screen();
+
+        return 0;
+    } else {
+        log_log("handle_device_disconnect(): Failed to re-open device!");
+
+        erase_and_delete_window(window);
+        redraw_screen();
+
+        return 1;
+    }
+}
+
+/**
+ * Seeks to the given position relative to the start of the device.  Gracefully
+ * handles device errors and disconnects by retrying the operation or, if the
+ * device has been disconnected, waiting for the device to reconnect.
+ *
+ * @param fd                       A pointer to a variable holding the current
+ *                                 device handle.  If the device
+ *                                 disconnects/reconnects during the course of
+ *                                 this function, the contents of the variable
+ *                                 will be overwritten with a new handle to the
+ *                                 device.  If the device disconnects and cannot
+ *                                 be re-opened, this variable is set to -1.
+ * @param position                 The position to which to seek, relative to
+ *                                 the start of the device.
+ * @param device_was_disconnected  A pointer to a variable which will be set to
+ *                                 1 if the device was disconnected during the
+ *                                 course of this function, or left unmodified
+ *                                 otherwise.  This parameter may be set to
+ *                                 NULL.
+ *
+ * @returns The current position of the file pointer, or -1 if (a) an
+ *          unrecoverable error occurred, or (b) an error occurred and retry
+ *          attempts have been exhausted.
+ */
+off_t lseek_or_retry(int *fd, off_t position, int *device_was_disconnected) {
+    int retry_count = 0;
+    WINDOW *window;
+    int64_t ret;
     int iret;
     char *new_device_name;
     dev_t new_device_num;
-    off_t ret;
-    WINDOW *window;
-    main_thread_status_type previous_status;
+    main_thread_status_type previous_status = main_thread_status;
 
-    op_retry_count = 0;
-    reset_retry_count = 0;
-    *device_was_disconnected = 0;
-    ret = lseek(*fd, position, SEEK_SET);
-    previous_status = main_thread_status;
+    if((ret = lseek(*fd, position, SEEK_SET)) == -1) {
+        snprintf(msg_buffer, sizeof(msg_buffer), "lseek_or_retry(): seek error while attempting to seek to sector %lu", position / device_stats.sector_size);
+        log_log(msg_buffer);
+    }
 
-    while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
-        // If we haven't completed at least one round, then we can't be sure that the
-        // beginning-of-device and middle-of-device are accurate -- and if the device
-        // is disconnected and reconnected (or reset), the device name might change --
-        // so only try to recover if we've completed at least one round.
-        if(num_rounds > 0) {
-            if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
+    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+        if(did_device_disconnect(device_stats.device_num)) {
+            if(device_was_disconnected) {
                 *device_was_disconnected = 1;
-                if(*fd != -1) {
-                    close(*fd);
-                }
+            }
 
-                main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
-                log_log("retriable_lseek(): Device disconnected.  Waiting for device to be reconnected...");
-                window = device_disconnected_message();
-
-                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, &new_device_name, &new_device_num, fd);
-
-                if(iret == -1) {
-                    log_log("retriable_lseek(): Failed to reconnect device!");
-                } else {
-                    log_log("retriable_lseek(): Device reconnected.");
-                    if(program_options.device_name) {
-                        free(program_options.device_name);
-                    }
-
-                    program_options.device_name = new_device_name;
-                    device_stats.device_num = new_device_num;
-                }
-
-                main_thread_status = previous_status;
-                erase_and_delete_window(window);
-                redraw_screen();
-            } else {
-                if(op_retry_count < MAX_OP_RETRIES) {
-                    log_log("retriable_lseek(): Re-attempting seek operation");
-                    ret = lseek(*fd, position, SEEK_SET);
-                    op_retry_count++;
-                } else {
-                    if(can_reset_device(device_stats.device_num)) {
-                        log_log("retriable_lseek(): Device error.  Attempting to reset the device...");
-                        window = resetting_device_message();
-
-                        main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
-                        *fd = reset_device(*fd);
-                        *device_was_disconnected = 1;
-
-                        if(*fd == -1) {
-                            log_log("retriable_lseek(): Device reset failed!");
-                            reset_retry_count = MAX_RESET_RETRIES;
-                        } else {
-                            log_log("retriable_lseek(): Device reset successfully.");
-                            op_retry_count = 0;
-                            reset_retry_count++;
-                        }
-
-                        main_thread_status = previous_status;
-                        erase_and_delete_window(window);
-                        redraw_screen();
-                    } else {
-                        // Insta-fail
-                        reset_retry_count = MAX_RESET_RETRIES;
-                    }
-                }
+            if(handle_device_disconnect(fd, position, 0) == -1) {
+                return -1;
             }
         } else {
-          return -1;
+            ret = lseek(*fd, position, SEEK_SET);
+            retry_count++;
         }
     }
 
     return ret;
 }
 
-int64_t retriable_read(int *fd, void *buf, uint64_t count, off_t position) {
-    int op_retry_count;
-    int reset_retry_count;
-    int device_was_disconnected;
-    int iret;
-    int64_t ret;
+/**
+ * Seeks to the given position relative to the start of the device.  Gracefully
+ * handles device errors and disconnects by retrying the operation, attempting
+ * to reset the device, and/or waiting for the device to reconnect.
+ *
+ * @param fd                       A pointer to a variable holding the current
+ *                                 device handle.  If the device
+ *                                 disconnects/reconnects during the course of
+ *                                 this function, the contents of the variable
+ *                                 will be overwritten with a new handle to the
+ *                                 device.  If the device disconnects and cannot
+ *                                 be re-opened, this variable is set to -1.
+ * @param position                 The position to which to seek, relative to
+ *                                 the start of the device.
+ * @param device_was_disconnected  A pointer to a variable which will be set to
+ *                                 1 if the device was disconnected during the
+ *                                 course of this function, or left unmodified
+ *                                 otherwise.  This parameter may be set to
+ *                                 NULL.
+ *
+ * @returns The current position of the file pointer, or -1 if (a) an
+ *          unrecoverable error occurred, or (b) an error occurred and retry
+ *          attempts have been exhausted.
+ */
+int64_t lseek_or_reset_device(int *fd, off_t position, int *device_was_disconnected) {
+    int retry_count = 0;
     WINDOW *window;
+    int64_t ret;
+    int iret;
     char *new_device_name;
     dev_t new_device_num;
-    main_thread_status_type previous_status;
+    main_thread_status_type previous_status = main_thread_status;
 
-    op_retry_count = 0;
-    reset_retry_count = 0;
-    previous_status = main_thread_status;
+    ret = lseek_or_retry(fd, position, device_was_disconnected);
+    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+        if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
+            if(device_was_disconnected) {
+                *device_was_disconnected = 1;
+            }
+
+            if(handle_device_disconnect(fd, position, 0) == -1) {
+                return -1;
+            }
+        } else {
+            if(can_reset_device(device_stats.device_num)) {
+                window = resetting_device_message(__func__);
+
+                main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
+                *fd = reset_device(*fd);
+                main_thread_status = previous_status;
+
+                if(*fd == -1) {
+                    log_log("lseek_or_reset_device(): Device reset failed!");
+
+                    erase_and_delete_window(window);
+                    redraw_screen();
+
+                    return -1;
+                }
+
+                log_log("lseek_or_reset_device(): Device reset successfully.");
+                retry_count++;
+
+                ret = lseek_or_retry(fd, position, device_was_disconnected);
+
+                *device_was_disconnected = 1;
+
+                erase_and_delete_window(window);
+                redraw_screen();
+            } else {
+                // Insta-fail
+                log_log("read_or_reset_device(): Don't know how to reset this device");
+                return -1;
+            }
+        }
+    }
+
+    return ret;
+}
+
+/**
+ * Reads from the given device.  Gracefully handles device errors and
+ * disconnects by retrying the operation or, if the device has been
+ * disconnected, waiting for the device to reconnect.
+ *
+ * @param fd        A pointer to a variable holding the current device handle.
+ *                  If the device disconnects/reconnects during the course of
+ *                  this function, the contents of the variable will be
+ *                  overwritten with a new handle to the device.  If the device
+ *                  disconnects and cannot be re-opened, this variable is set to
+ *                  -1.
+ * @param buf       A pointer to a buffer which will receive the data read from
+ *                  the device.
+ * @param count     The number of bytes to read from the device.
+ * @param position  The current position of the file pointer in the device.
+ *                  This is used in case the device needs to be reset and must
+ *                  be reopened.
+ *
+ * @returns The number of bytes read from the device, or -1 if (a) an
+ *          unrecoverable error occurred, or (b) an error occurred and retry
+ *          attempts have been exhausted.
+ */
+int64_t read_or_retry(int *fd, void *buf, uint64_t count, off_t position) {
+    int retry_count = 0;
+    WINDOW *window;
+    int64_t ret;
+    int iret;
+    char *new_device_name;
+    dev_t new_device_num;
+    main_thread_status_type previous_status = main_thread_status;
 
     ret = read(*fd, buf, count);
-
     if(ret == -1) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "retriable_read(): read error during sector %lu", position / device_stats.sector_size);
+        snprintf(msg_buffer, sizeof(msg_buffer), "read_or_retry(): read error during sector %lu", position / device_stats.sector_size);
         log_log(msg_buffer);
     }
 
-    while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
-        if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
-            if(*fd != -1) {
-                close(*fd);
+    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+        if(did_device_disconnect(device_stats.device_num)) {
+            if(handle_device_disconnect(fd, position, 1) == -1) {
+                return -1;
             }
+        } else {
+            ret = read(*fd, buf, count);
+            retry_count++;
+        }
+    }
 
-            main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
-            log_log("retriable_read(): Device disconnected.  Waiting for device to be reconnected...");
-            window = device_disconnected_message();
+    return ret;
+}
 
-            iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, &new_device_name, &new_device_num, fd);
+/**
+ * Reads from the given device.  Gracefully handles device errors and
+ * disconnects by retrying the operation, attempting to reset the device, and/or
+ * waiting for the device to reconnect.
+ *
+ * @param fd        A pointer to a variable holding the current device handle.
+ *                  If the device disconnects/reconnects during the course of
+ *                  this function, the contents of the variable will be
+ *                  overwritten with a new handle to the device.  If the device
+ *                  disconnects and cannot be re-opened, this variable is set to
+ *                  -1.
+ * @param buf       A pointer to a buffer which will receive the data read from
+ *                  the device.
+ * @param count     The number of bytes to read from the device.
+ * @param position  The current position of the file pointer in the device.
+ *                  This is used in case the device needs to be reset and must
+ *                  be reopened.
+ *
+ * @returns The number of bytes read from the device, or -1 if (a) an
+ *          unrecoverable error occurred, or (b) an error occurred and retry
+ *          attempts have been exhausted.
+ */
+int64_t read_or_reset_device(int *fd, void *buf, uint64_t count, off_t position) {
+    int retry_count = 0;
+    WINDOW *window;
+    int64_t ret;
+    int iret;
+    char *new_device_name;
+    dev_t new_device_num;
+    main_thread_status_type previous_status = main_thread_status;
 
-            if(iret != -1) {
-                log_log("retriable_read(): Device reconnected.");
+    ret = read_or_retry(fd, buf, count, position);
+    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+        if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
+            if(handle_device_disconnect(fd, position, 1) == -1) {
+                return -1;
+            }
+        } else {
+            if(can_reset_device(device_stats.device_num)) {
+                window = resetting_device_message(__func__);
 
-                if(program_options.device_name) {
-                    free(program_options.device_name);
+                main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
+                *fd = reset_device(*fd);
+                main_thread_status = previous_status;
+
+                if(*fd == -1) {
+                    log_log("read_or_reset_device(): Device reset failed!");
+                    retry_count = MAX_RESET_RETRIES;
+                } else {
+                    log_log("read_or_reset_device(): Device reset successfully.");
+                    retry_count++;
+
+                    if(lseek_or_retry(fd, position, NULL) == -1) {
+                        log_log("read_or_reset_device(): Failed to seek to previous position after re-opening device");
+                        erase_and_delete_window(window);
+                        redraw_screen();
+                        return -1;
+                    }
+
+                    ret = read_or_retry(fd, buf, count, position);
                 }
 
-                program_options.device_name = new_device_name;
-                device_stats.device_num = new_device_num;
+                erase_and_delete_window(window);
+                redraw_screen();
+            } else {
+                // Insta-fail
+                log_log("read_or_reset_device(): Don't know how to reset this device");
+                return -1;
+            }
+        }
+    }
 
-                if(retriable_lseek(fd, position, &device_was_disconnected) == -1) {
-                    log_log("retriable_read(): Failed to seek to previous position after re-opening device");
-                    erase_and_delete_window(window);
-                    redraw_screen();
+    return ret;
+}
+
+int64_t write_or_retry(int *fd, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
+    int retry_count = 0;
+    WINDOW *window;
+    int64_t ret;
+    int iret;
+    char *new_device_name;
+    dev_t new_device_num;
+    main_thread_status_type previous_status = main_thread_status;
+
+    ret = write(*fd, buf, count);
+    if(ret == -1) {
+        snprintf(msg_buffer, sizeof(msg_buffer), "write_or_retry(): write error during sector %lu", position / device_stats.sector_size);
+        log_log(msg_buffer);
+    }
+
+    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+        // If we haven't completed at least one round, then we can't be sure that the
+        // beginning-of-device and middle-of-device are accurate -- and if the device
+        // is disconnected and reconnected (or reset), the device name might change --
+        // so only try to recover if we've completed at least one round.
+        if(did_device_disconnect(device_stats.device_num)) {
+            *device_was_disconnected = 1;
+            if(num_rounds > 0) {
+                if(handle_device_disconnect(fd, position, 1) == -1) {
                     return -1;
                 }
             } else {
-                log_log("retriable_read(): Failed to reconnect device!");
+                log_log("write_or_retry(): Device disconnected during first round of testing");
+                return -1;
             }
-
-            main_thread_status = previous_status;
-            erase_and_delete_window(window);
-            redraw_screen();
         } else {
-            if(op_retry_count < MAX_OP_RETRIES) {
-                log_log("retriable_read(): Re-attempting read operation");
-                ret = read(*fd, buf, count);
-                op_retry_count++;
+            ret = write(*fd, buf, count);
+            retry_count++;
+        }
+    }
+
+    return ret;
+}
+
+int64_t write_or_reset_device(int *fd, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
+    int retry_count = 0;
+    WINDOW *window;
+    int64_t ret;
+    int iret;
+    char *new_device_name;
+    dev_t new_device_num;
+    main_thread_status_type previous_status = main_thread_status;
+
+    ret = write_or_retry(fd, buf, count, position, device_was_disconnected);
+    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+        // If we haven't completed at least one round, then we can't be sure that the
+        // beginning-of-device and middle-of-device are accurate -- and if the device
+        // is disconnected and reconnected (or reset), the device name might change --
+        // so only try to recover if we've completed at least one round.
+        if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
+            *device_was_disconnected = 1;
+            if(num_rounds > 0) {
+                if(handle_device_disconnect(fd, position, 1) == -1) {
+                    return -1;
+                }
             } else {
+                log_log("write_or_reset_device(): Device disconnected during first round of testing");
+                return -1;
+            }
+        } else {
+            if(num_rounds > 0) {
                 if(can_reset_device(device_stats.device_num)) {
-                    log_log("retriable_read(): Device error.  Attempting to reset the device...");
-                    window = resetting_device_message();
+                    window = resetting_device_message(__func__);
 
                     main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                     *fd = reset_device(*fd);
+                    main_thread_status = previous_status;
 
                     if(*fd == -1) {
-                        log_log("retriable_read(): Device reset failed!");
-                        reset_retry_count = MAX_RESET_RETRIES;
+                        log_log("write_or_reset_device(): Device reset failed!");
+                        retry_count = MAX_RESET_RETRIES;
                     } else {
-                        log_log("retriable_read(): Device reset successfully.");
-                        op_retry_count = 0;
-                        reset_retry_count++;
+                        log_log("write_or_reset_device(): Device reset successfully.");
+                        retry_count++;
 
-                        if(retriable_lseek(fd, position, &device_was_disconnected) == -1) {
-                            log_log("retriable_read(): Failed to seek to previous position after re-opening device");
+                        if(lseek_or_retry(fd, position, device_was_disconnected) == -1) {
+                            log_log("write_or_reset_device(): Failed to seek to previous position after re-opening device");
                             erase_and_delete_window(window);
                             redraw_screen();
                             return -1;
                         }
 
-                        ret = read(*fd, buf, count);
+                        ret = write_or_retry(fd, buf, count, position, device_was_disconnected);
                     }
 
-                    usleep(250000); // Give the device time to either reconnect and settle or for the device to fully disconnect
+                    *device_was_disconnected = 1;
 
-                    main_thread_status = previous_status;
                     erase_and_delete_window(window);
                     redraw_screen();
                 } else {
                     // Insta-fail
+                    log_log("write_or_reset_device(): Don't know how to reset this device");
                     return -1;
                 }
-            }
-        }
-    }
-
-    return ret;
-}
-
-int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
-    int op_retry_count;
-    int reset_retry_count;
-    int iret;
-    int64_t ret;
-    WINDOW *window;
-    char *new_device_name;
-    dev_t new_device_num;
-    main_thread_status_type previous_status;
-
-    op_retry_count = 0;
-    reset_retry_count = 0;
-    *device_was_disconnected = 0;
-    previous_status = main_thread_status;
-
-    ret = write(*fd, buf, count);
-
-    if(ret == -1) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "retriable_write(): write error during sector %lu", position / device_stats.sector_size);
-        log_log(msg_buffer);
-    }
-
-    while(((reset_retry_count < MAX_RESET_RETRIES) || (reset_retry_count == MAX_RESET_RETRIES && op_retry_count < MAX_OP_RETRIES)) && ret == -1) {
-        // If we haven't completed at least one round, then we can't be sure that the
-        // beginning-of-device and middle-of-device are accurate -- and if the device
-        // is disconnected and reconnected (or reset), the device name might change --
-        // so only try to recover if we've completed at least one round.
-        if(num_rounds > 0) {
-            if(did_device_disconnect(device_stats.device_num) || *fd == -1) {
-                if(*fd != -1) {
-                    close(*fd);
-                }
-
-                main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
-                log_log("retriable_write(): Device disconnected.  Waiting for device to be reconnected...");
-                window = device_disconnected_message();
-
-                iret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, &new_device_name, &new_device_num, fd);
-
-                if(iret != -1) {
-                    log_log("retriable_write(): Device reconnected.");
-
-                    if(program_options.device_name) {
-                        free(program_options.device_name);
-                    }
-
-                    program_options.device_name = new_device_name;
-                    device_stats.device_num = new_device_num;
-
-                    if(retriable_lseek(fd, position, device_was_disconnected) == -1) {
-                        log_log("retriable_write(): Failed to seek to previous position after re-opening device");
-                        erase_and_delete_window(window);
-                        redraw_screen();
-                        return -1;
-                    }
-                } else {
-                    log_log("retriable_write(): Failed to re-open device!");
-                }
-
-                *device_was_disconnected = 1;
-
-                main_thread_status = previous_status;
-                erase_and_delete_window(window);
-                redraw_screen();
             } else {
-                if(op_retry_count < MAX_OP_RETRIES) {
-                    log_log("retriable_write(): Re-attempting write operation");
-                    ret = write(*fd, buf, count);
-                    op_retry_count++;
-                } else {
-                    if(can_reset_device(device_stats.device_num)) {
-                        log_log("retriable_write(): Device error.  Attempting to reset the device...");
-                        window = resetting_device_message();
-
-                        main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
-                        *fd = reset_device(*fd);
-
-                        if(*fd == -1) {
-                            log_log("retriable_write(): Device reset failed!");
-                            reset_retry_count = MAX_RESET_RETRIES;
-                        } else {
-                            log_log("retriable_write(): Device reset successfully.");
-                            op_retry_count = 0;
-                            reset_retry_count++;
-
-                            if(retriable_lseek(fd, position, device_was_disconnected) == -1) {
-                                log_log("retriable_write(): Failed to seek to previous position after re-opening device");
-                                erase_and_delete_window(window);
-                                redraw_screen();
-                                return -1;
-                            }
-
-                            ret = write(*fd, buf, count);
-                        }
-
-                        *device_was_disconnected = 1;
-
-                        main_thread_status = previous_status;
-                        erase_and_delete_window(window);
-                        redraw_screen();
-                    } else {
-                        // Insta-fail
-                        return -1;
-                    }
-                }
+                // Insta-fail
+                log_log("write_or_reset_device(): Refusing to reset device during first round of testing");
+                return -1;
             }
-        } else {
-            return -1;
         }
     }
 
@@ -2139,16 +2260,13 @@ int64_t retriable_write(int *fd, void *buf, uint64_t count, off_t position, int 
 }
 
 void malloc_error(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "malloc() failed: %s", strerror(errnum));
-    log_log(msg_buffer);
-
     snprintf(msg_buffer, sizeof(msg_buffer),
-        "Failed to allocate memory for one of the buffers we need to do the "
-        "stress test.  Unfortunately this means we have to abort the stress "
-        "test.\n\nThe error we got while trying to allocate memory was: %s", strerror(errnum));
+             "Failed to allocate memory for one of the buffers we need to do "
+             "the stress test.  Unfortunately this means that we have to abort "
+             "the stress test.\n\nThe error we got was: %s", strerror(errnum));
+
     message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
-
 
 void posix_memalign_error(int errnum) {
     snprintf(msg_buffer, sizeof(msg_buffer),
@@ -2407,6 +2525,64 @@ void mark_sector_unwritable(uint64_t sector_num) {
     sector_display.sector_map[sector_num] |= SECTOR_MAP_FLAG_DO_NOT_USE;
 }
 
+int endurance_test_read_block(int *fd, uint64_t starting_sector, int num_sectors, char *buffer, int *device_was_disconnected) {
+    int ret, bytes_left_to_read, block_size;
+    uint64_t num_sectors_to_read;
+    handle_key_inputs(NULL);
+    wait_for_file_lock(NULL);
+
+    bytes_left_to_read = block_size = device_stats.sector_size * num_sectors;
+
+    while(bytes_left_to_read) {
+        // Alternate between reading from the device and filling the buffer with all zeroes
+        num_sectors_to_read = get_max_writable_sectors(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size), bytes_left_to_read / device_stats.sector_size);
+        if(num_sectors_to_read) {
+            if((ret = read_or_reset_device(fd, buffer + (block_size - bytes_left_to_read), num_sectors_to_read * device_stats.sector_size, lseek(*fd, 0, SEEK_CUR))) == -1) {
+                if(*fd == -1) {
+                    return -1;
+                } else {
+                    // Mark this sector as bad and skip over it
+                    if(!is_sector_bad(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size))) {
+                        snprintf(msg_buffer, sizeof(msg_buffer), "endurance_test_read_block(): Read error on sector %lu; marking sector unusable", starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size));
+                        log_log(msg_buffer);
+                    }
+
+                    mark_sector_unwritable(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size));
+                    mark_sector_bad(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size));
+                    bytes_left_to_read -= device_stats.sector_size;
+
+                    if((lseek_or_retry(fd, (starting_sector * device_stats.sector_size) + (block_size - bytes_left_to_read), device_was_disconnected)) == -1) {
+                        // Give up if we can't seek
+                        return -1;
+                    }
+
+                    continue;
+                }
+            }
+
+            bytes_left_to_read -= ret;
+            device_stats.bytes_since_last_status_update += ret;
+        }
+
+        if(bytes_left_to_read) {
+            num_sectors_to_read = get_max_unwritable_sectors(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size), bytes_left_to_read / device_stats.sector_size);
+            if(num_sectors_to_read) {
+                memset(buffer + (block_size - bytes_left_to_read), 0, num_sectors_to_read * device_stats.sector_size);
+                bytes_left_to_read -= num_sectors_to_read * device_stats.sector_size;
+
+                // Seek past the unwritable sectors
+                if(lseek_or_retry(fd, (starting_sector * device_stats.sector_size) + (block_size - bytes_left_to_read), device_was_disconnected) == -1) {
+                    return -1;
+                }
+            }
+        }
+
+        print_status_update();
+    }
+
+    return 0;
+}
+
 void device_locate_error() {
     log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
     message_window(stdscr, ERROR_TITLE,
@@ -2518,6 +2694,356 @@ void save_state_error() {
 
     free(program_options.state_file);
     program_options.state_file = NULL;
+}
+
+int was_bod_area_affected(uint64_t starting_byte) {
+    return starting_byte < BOD_MOD_BUFFER_SIZE;
+}
+
+int was_mod_area_affected(uint64_t starting_byte, uint64_t ending_byte) {
+    return (starting_byte >= device_stats.middle_of_device && starting_byte < (device_stats.middle_of_device + BOD_MOD_BUFFER_SIZE)) || (ending_byte >= device_stats.middle_of_device && ending_byte < (device_stats.middle_of_device + BOD_MOD_BUFFER_SIZE));
+}
+
+/**
+ * Update the beginning-of-device buffer if a write operation at the given
+ * starting_byte would have affected the data in the BOD area.
+ *
+ * @param starting_byte  The starting location at which the write to the device
+ *                       occurred (relative to the start of the device).
+ * @param buffer         A buffer containing the data that was written to the
+ *                       device.
+ * @param num_bytes      The number of bytes that were written to the device.
+ */
+void update_bod_buffer(uint64_t starting_byte, void *buffer, uint64_t num_bytes) {
+    uint64_t bytes_to_copy;
+
+    if(was_bod_area_affected(starting_byte)) {
+        bytes_to_copy = num_bytes;
+
+        if(num_bytes + starting_byte > BOD_MOD_BUFFER_SIZE) {
+            bytes_to_copy = BOD_MOD_BUFFER_SIZE - starting_byte;
+        }
+
+        memcpy(bod_buffer + starting_byte, buffer, bytes_to_copy);
+
+        if(save_state()) {
+            save_state_error();
+        }
+    }
+}
+
+/**
+ * Update the middle-of-device buffer if a write operation at the given
+ * starting_byte would have affected the data in the MOD area.
+ *
+ * @param starting_byte  The starting location at which the write to the device
+ *                       occurred (relative to the start of the device).
+ * @param buffer         A buffer containing the data that was written to the
+ *                       device.
+ * @param num_bytes      The number of bytes that were written to the device.
+ */
+void update_mod_buffer(uint64_t starting_byte, void *buffer, uint64_t num_bytes) {
+    uint64_t bytes_to_copy;
+    uint64_t buffer_offset = 0;
+    char *mod_position = mod_buffer;
+
+    if(was_mod_area_affected(starting_byte, starting_byte + num_bytes - 1)) {
+        bytes_to_copy = num_bytes;
+
+        if(starting_byte < device_stats.middle_of_device) {
+            buffer_offset = device_stats.middle_of_device - starting_byte;
+            bytes_to_copy -= buffer_offset;
+
+            if(bytes_to_copy > BOD_MOD_BUFFER_SIZE) {
+                bytes_to_copy = BOD_MOD_BUFFER_SIZE;
+            }
+        } else {
+            mod_position += starting_byte - device_stats.middle_of_device;
+            if((starting_byte - device_stats.middle_of_device) + num_bytes > BOD_MOD_BUFFER_SIZE) {
+                bytes_to_copy = BOD_MOD_BUFFER_SIZE - (starting_byte - device_stats.middle_of_device);
+            }
+        }
+
+        memcpy(mod_position, buffer + buffer_offset, bytes_to_copy);
+
+        if(save_state()) {
+            save_state_error();
+        }
+    }
+}
+
+/**
+ * Update the beginning-of-device or middle-of-device buffer if a write
+ * operation at the given starting_byte would have affected the data in the BOD
+ * or MOD areas.
+ *
+ * @param starting_byte  The starting location at which the write to the device
+ *                       occurred (relative to the start of the device).
+ * @param buffer         A buffer containing the data that was written.
+ * @param num_bytes      The number of bytes that were written to the device.
+ */
+void update_bod_mod_buffers(uint64_t starting_byte, void *buffer, uint64_t num_bytes) {
+    update_bod_buffer(starting_byte, buffer, num_bytes);
+    update_mod_buffer(starting_byte, buffer, num_bytes);
+}
+
+/**
+ * Writes a block of data to the device for the endurance test, skipping over
+ * any sectors that are flagged as "unwritable".
+ *
+ * @param fd                          A pointer to a variable containing the
+ *                                    file handle for the current device.  This
+ *                                    variable may be updated during the course
+ *                                    of the operation -- for example, if a
+ *                                    device disconnect occurs.
+ * @param starting_sector             The starting sector at which to start
+ *                                    writing the data to the device.
+ * @param num_sectors                 The number of sectors to write to the
+ *                                    device.
+ * @param buffer                      A pointer to a buffer containing the data
+ *                                    to be written to the device.
+ * @param device_was_disconnected     A pointer to a variable indicating whether
+ *                                    a device disconnect was encountered during
+ *                                    the operation.  If a device disconnect is
+ *                                    encountered, this variable will be set to
+ *                                    1; if the operation completed without a
+ *                                    disconnect, this variable will be set to
+ *                                    0.
+ *
+ * @returns 0 if the operation completed successfully or if the device
+ * disconnected during the operation.  If an error occurred, one of the
+ * ABORT_REASON_* codes is returned instead.  Note that if an error occurs that
+ * caused the device to disconnect and the device could not be reconnected, *fd
+ * is set to -1.
+ */
+int endurance_test_write_block(int *fd, uint64_t starting_sector, int num_sectors, char *buffer, int *device_was_disconnected) {
+    // The logic around figuring out where we needed to write to various buffers
+    // was getting pretty gnarly, so I decided to just err on the side of using
+    // more variables to keep track of where everything is.  I'm going off the
+    // assumption that on an optimized build, the compiler will optimize some of
+    // these out and the memory/performance effect will be negligible.
+    uint64_t num_sectors_to_write, num_bytes_to_write;
+    uint64_t num_bytes_written, num_sectors_written;
+    uint64_t num_bytes_remaining, num_sectors_remaining;
+    uint64_t current_sector, current_byte;
+    uint64_t num_sectors_affected_this_round, num_bytes_affected_this_round;
+    uint64_t num_bytes_to_update_in_bod_mod_buffer;
+    uint64_t starting_byte;
+    int ret;
+
+    num_bytes_remaining = num_sectors * device_stats.sector_size;
+    *device_was_disconnected = 0;
+    ret = 0;
+
+    starting_byte = starting_sector * device_stats.sector_size;
+
+    while(num_bytes_remaining && !*device_was_disconnected) {
+        handle_key_inputs(NULL);
+        wait_for_file_lock(NULL);
+
+        num_sectors_remaining = num_bytes_remaining / device_stats.sector_size;
+        num_sectors_written = num_sectors - num_sectors_remaining;
+        num_bytes_written = num_sectors_written * device_stats.sector_size;
+        current_sector = starting_sector + num_sectors_written;
+        current_byte = current_sector * device_stats.sector_size;
+
+        if(num_sectors_to_write = get_max_writable_sectors(current_sector, num_sectors_remaining)) {
+            num_bytes_to_write = num_sectors_to_write * device_stats.sector_size;
+            if((ret = write_or_reset_device(fd, buffer + num_bytes_written, num_bytes_to_write, current_byte, device_was_disconnected)) == -1) {
+                if(*fd == -1) {
+                    // The device has disconnected, and attempts to wait
+                    // for it to reconnect have failed
+                    return ABORT_REASON_WRITE_ERROR;
+                } else {
+                    // Mark this sector bad and skip over it
+                    if(!is_sector_bad(current_sector)) {
+                        snprintf(msg_buffer, sizeof(msg_buffer), "endurance_test_write_block(): Write error on sector %lu; marking sector unusable", current_sector);
+                        log_log(msg_buffer);
+                        num_bad_sectors++;
+                    }
+
+                    mark_sector_unwritable(current_sector);
+                    mark_sector_bad(current_sector);
+                    num_bad_sectors_this_round++;
+
+                    num_bytes_remaining -= device_stats.sector_size;
+
+                    if((lseek_or_retry(fd, current_byte + device_stats.sector_size, device_was_disconnected)) == -1) {
+                        // Give up if we can't seek
+                        return ABORT_REASON_SEEK_ERROR;
+                    }
+
+                    continue;
+                }
+            } else {
+                num_bytes_written += ret;
+                num_bytes_remaining -= ret;
+                num_sectors_written = num_bytes_written / device_stats.sector_size;
+                num_sectors_remaining = num_sectors - num_sectors_written;
+                num_sectors_affected_this_round = num_sectors_written;
+                num_bytes_affected_this_round = num_sectors_affected_this_round * device_stats.sector_size;
+                current_sector = starting_sector + num_sectors_written;
+            }
+        }
+
+        // If the device disconnected during the write operation, we want to
+        // give up right away so that we can restart the slice.
+        if(*device_was_disconnected) {
+            break;
+        }
+
+        if(num_sectors_to_write = get_max_unwritable_sectors(current_sector, num_sectors_remaining)) {
+            // Seek past the bad sectors
+            num_sectors_remaining -= num_sectors_to_write;
+            num_bytes_remaining -= num_sectors_to_write * device_stats.sector_size;
+            num_sectors_written += num_sectors_to_write;
+            num_bytes_written += num_sectors_to_write * device_stats.sector_size;
+            num_sectors_affected_this_round += num_sectors_to_write;
+            num_bytes_affected_this_round = num_sectors_affected_this_round * device_stats.sector_size;
+
+            if(lseek_or_retry(fd, starting_byte + num_bytes_written, device_was_disconnected) == -1) {
+                return ABORT_REASON_SEEK_ERROR;
+            }
+        }
+
+        // Update the BOD and MOD buffers if necessary
+        update_bod_mod_buffers(current_byte, buffer + (current_byte - starting_byte), num_bytes_affected_this_round);
+        device_stats.bytes_since_last_status_update += ret;
+        state_data.bytes_written += ret;
+
+        print_status_update();
+    }
+
+    return 0;
+}
+
+/**
+ * Embed sector number, round number, UUID, and CRC32 data into the the data in
+ * the given buffer.  The buffer is modified in place.
+ *
+ * @param buffer           A buffer containing the data to be written to the
+ *                         sector (or verified against the sector contents).
+ * @param num_sectors      The number of sectors worth of data available in the
+ *                         buffer.
+ * @param starting_sector  The sector number of the first sector represented by
+ *                         the buffer.
+ * @param round_num        The current round number of endurance testing.
+ */
+void prepare_endurance_test_block(char *buffer, int num_sectors, uint64_t starting_sector, uint64_t round_num) {
+    int i;
+    // We'll embed some information into the data to try to detect
+    // various types of errors:
+    //  - Sector number (to detect address decoding errors),
+    //  - Round number (to detect failed writes),
+    //  - Device UUID (to detect cross-device reads)
+    //  - CRC32 (to detect bit flip errors)
+    for(i = 0; i < num_sectors; i++) {
+        embed_sector_number(buffer + (i * device_stats.sector_size), starting_sector + i);
+        embed_round_number(buffer + (i * device_stats.sector_size), round_num);
+        embed_device_uuid(buffer + (i * device_stats.sector_size));
+        embed_crc32c(buffer + (i * device_stats.sector_size), device_stats.sector_size);
+    }
+}
+
+/**
+ * Writes random data to a slice of the device.  Sector number, round number,
+ * and device UUID are embedded in the random data.
+ *
+ * @param fd           A pointer to a handle to the device to be written to.
+ * @param round_num    The current round number (starting from 0).
+ * @param rng_seed     The seed that should be used to initialize the RNG when
+ *                     generating data to write to the device.
+ * @param slice_num    The slice number of the current slice.
+ * @param num_sectors  The number of sectors per slice.  If the number of
+ *                     sectors would cause the write to go past the end of the
+ *                     device, the write is automatically truncated to fit the
+ *                     remaining space on the deivce.
+ * @param bod_buffer   A pointer to the start of the current beginning-of-device
+ *                     buffer.
+ * @param mod_buffer   A pointer to the start of the current middle-of-device
+ *                     buffer.
+ *
+ * @returns 0 if the write completed successfully, -1 if an error occurred (not
+ *          related to the device), or one of the ABORT_REASON_* codes if an
+ *          error related to the device occurs.
+ */
+int endurance_test_write_slice(int *fd, uint64_t round_num, unsigned int rng_seed, uint64_t slice_num, uint64_t num_sectors, char *bod_buffer, char *mod_buffer) {
+    uint64_t cur_sector, last_sector, cur_block_size, sectors_in_cur_block, bytes_left_to_write, i, num_sectors_to_write, sectors_per_block;
+    int device_was_disconnected, ret;
+    sql_thread_status_type prev_sql_thread_status = sql_thread_status;
+    char *write_buffer;
+
+    if(ret = posix_memalign((void **) &write_buffer, sysconf(_SC_PAGESIZE), device_stats.block_size)) {
+        posix_memalign_error(ret);
+        return -1;
+    }
+
+    sectors_per_block = device_stats.block_size / device_stats.sector_size;
+
+    // Set last_sector to one sector past the last sector we should touch this slice
+    if(slice_num == (NUM_SLICES - 1)) {
+        last_sector = device_stats.num_sectors;
+    } else {
+        last_sector = get_slice_start(slice_num + 1);
+    }
+
+    do {
+        device_was_disconnected = 0;
+        rng_reseed(rng_seed);
+
+        if(lseek_or_retry(fd, get_slice_start(slice_num) * device_stats.sector_size, &device_was_disconnected) == -1) {
+            free(write_buffer);
+            return ABORT_REASON_SEEK_ERROR;
+        }
+
+        for(cur_sector = get_slice_start(slice_num); cur_sector < last_sector && !device_was_disconnected; cur_sector += sectors_in_cur_block) {
+            if(sql_thread_status != prev_sql_thread_status) {
+                prev_sql_thread_status = sql_thread_status;
+                print_sql_status(sql_thread_status);
+            }
+
+            if((cur_sector + sectors_per_block) > last_sector) {
+                sectors_in_cur_block = last_sector - cur_sector;
+                cur_block_size = sectors_in_cur_block * device_stats.sector_size;
+            } else {
+                sectors_in_cur_block = sectors_per_block;
+                cur_block_size = sectors_in_cur_block * device_stats.sector_size;
+            }
+
+            rng_fill_buffer(write_buffer, cur_block_size);
+            bytes_left_to_write = cur_block_size;
+
+            prepare_endurance_test_block(write_buffer, sectors_in_cur_block, cur_sector, round_num);
+
+            handle_key_inputs(NULL);
+            wait_for_file_lock(NULL);
+
+            ret = endurance_test_write_block(fd, cur_sector, sectors_in_cur_block, write_buffer, &device_was_disconnected);
+            if(ret == -1) {
+                free(write_buffer);
+                return ABORT_REASON_WRITE_ERROR;
+            }
+
+            if(device_was_disconnected) {
+                // Unmark the sectors we've written in this slice so far
+                log_log("Device disconnect was detected during this slice -- restarting slice");
+                reset_sector_map_partial(get_slice_start(slice_num), last_sector);
+                redraw_sector_map();
+            } else {
+                mark_sectors_written(cur_sector, cur_sector + sectors_in_cur_block);
+
+                assert(!gettimeofday(&stats_cur_time, NULL));
+                if(timediff(stress_test_stats.previous_update_time, stats_cur_time) >= (program_options.stats_interval * 1000000)) {
+                    stats_log(num_rounds, device_stats.num_bad_sectors);
+                }
+            }
+
+            refresh();
+        }
+    } while(device_was_disconnected);
+
+    free(write_buffer);
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -3115,195 +3641,15 @@ int main(int argc, char **argv) {
         read_order = random_list();
 
         for(cur_slice = 0, restart_slice = 0; cur_slice < NUM_SLICES; cur_slice++, restart_slice = 0) {
-            rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * 16));
-
-            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
+            if(ret = endurance_test_write_slice(&fd, num_rounds, initial_seed + read_order[cur_slice] + (num_rounds * NUM_SLICES), read_order[cur_slice], sectors_per_block, bod_buffer, mod_buffer)) {
                 main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                    ABORT_REASON_SEEK_ERROR);
+
+                if(ret > 0) {
+                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ret);
+                }
 
                 cleanup();
                 return 0;
-            }
-
-            if(read_order[cur_slice] == (NUM_SLICES - 1)) {
-                last_sector = device_stats.num_sectors;
-            } else {
-                last_sector = get_slice_start(read_order[cur_slice] + 1);
-            }
-
-            for(cur_sector = get_slice_start(read_order[cur_slice]); cur_sector < last_sector; cur_sector += cur_sectors_per_block) {
-
-                // Use bytes_left_to_write to hold the bytes left to read
-                if((cur_sector + sectors_per_block) > last_sector) {
-                    cur_sectors_per_block = last_sector - cur_sector;
-                    cur_block_size = cur_sectors_per_block * device_stats.sector_size;
-                } else {
-                    cur_block_size = device_stats.block_size;
-                    cur_sectors_per_block = sectors_per_block;
-                }
-
-                rng_fill_buffer(buf, cur_block_size);
-                bytes_left_to_write = cur_block_size;
-
-                // We'll embed some information into the data to try to detect
-                // various types of errors:
-                //  - Sector number (to detect address decoding errors),
-                //  - Round number (to detect failed writes),
-                //  - Device UUID (to detect cross-device reads)
-                //  - CRC32 (to detect bit flip errors)
-                //
-                // The first two are going to have a lot of zeros in them all
-                // the time, so to add some randomness to it, we'll use the
-                // top bit of the already-generated random data to decide
-                // whether to invert these values or not.
-                for(i = 0; i < cur_sectors_per_block; i++) {
-                    embed_sector_and_round_number(&(buf[i * device_stats.sector_size]), cur_sector + i, num_rounds);
-                    embed_device_uuid(&(buf[i * device_stats.sector_size]));
-                    embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
-                }
-
-                while(bytes_left_to_write) {
-                    handle_key_inputs(NULL);
-                    wait_for_file_lock(NULL);
-
-                    num_sectors_to_write = get_max_writable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
-                    if(num_sectors_to_write) {
-                        if((ret = retriable_write(&fd, buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR), &device_was_disconnected)) == -1) {
-                            if(fd == -1) {
-                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                                    ABORT_REASON_WRITE_ERROR);
-
-                                cleanup();
-                                return 0;
-                            } else {
-                                // Mark this sector bad and skip over it
-                                if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
-                                    snprintf(msg_buffer, sizeof(msg_buffer), "Write error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                    log_log(msg_buffer);
-                                }
-
-                                mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-
-                                if(device_was_disconnected) {
-                                  restart_slice = 1;
-                                  break;
-                                }
-
-                                bytes_left_to_write -= device_stats.sector_size;
-
-                                if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
-                                    // Give up if we can't seek
-                                    main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
-                                    cleanup();
-                                    return 0;
-                                }
-
-                                continue;
-                            }
-                        }
-
-                        if(device_was_disconnected) {
-                            restart_slice = 1;
-                            break;
-                        }
-
-                        // Do we need to update the BOD buffer?
-                        if(((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write)) < BOD_MOD_BUFFER_SIZE) {
-                            memcpy(
-                                bod_buffer + (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write),
-                                buf + (cur_block_size - bytes_left_to_write),
-                                ((cur_sector * device_stats.sector_size) + ret) > BOD_MOD_BUFFER_SIZE ?
-                                BOD_MOD_BUFFER_SIZE - (cur_sector * device_stats.sector_size) : ret
-                            );
-
-                            // If we updated the BOD buffer, we also need to
-                            // savestate.
-                            if(save_state()) {
-                                log_log("Error creating save state, disabling save stating");
-                                message_window(stdscr, WARNING_TITLE,
-                                    "An error occurred while trying to save the "
-                                    "program state.  Save stating has been "
-                                    "disabled.", 1);
-
-                                free(program_options.state_file);
-                                program_options.state_file = NULL;
-                            }
-
-                        }
-
-                        // Do we need to update the MOD buffer?
-                        if(((cur_sector * device_stats.sector_size) >= middle_of_device) && (((cur_sector * device_stats.sector_size) +
-                            (cur_block_size - bytes_left_to_write)) < (middle_of_device + BOD_MOD_BUFFER_SIZE))) {
-                            memcpy(
-                                mod_buffer + ((cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write) - middle_of_device),
-                                buf + (cur_block_size - bytes_left_to_write),
-                                ((cur_sector * device_stats.sector_size) + ret) > (middle_of_device + BOD_MOD_BUFFER_SIZE) ?
-                                BOD_MOD_BUFFER_SIZE - ((cur_sector * device_stats.sector_size) - middle_of_device) : ret
-                            );
-
-                            // If we updated the MOD buffer, we also need to
-                            // savestate.
-                            if(save_state()) {
-                                log_log("Error creating save state, disabling save stating");
-                                message_window(stdscr, WARNING_TITLE,
-                                    "An error occurred while trying to save the "
-                                    "program state.  Save stating has been "
-                                    "disabled.", 1);
-
-                                free(program_options.state_file);
-                                program_options.state_file = NULL;
-                            }
-                        }
-
-                        bytes_left_to_write -= ret;
-                        device_stats.bytes_since_last_status_update += ret;
-                        state_data.bytes_written += ret;
-                    }
-
-                    if(bytes_left_to_write) {
-                        num_sectors_to_write = get_max_unwritable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
-                        if(num_sectors_to_write) {
-                            bytes_left_to_write -= num_sectors_to_write * device_stats.sector_size;
-
-                            // Seek past the unwritable sectors
-                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
-                                // Give up if we can't seek
-                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
-                                cleanup();
-                                return 0;
-                            }
-                        }
-                    }
-
-                    print_status_update();
-                }
-
-                if(restart_slice) {
-                    break;
-                }
-
-                mark_sectors_written(cur_sector, cur_sector + cur_sectors_per_block);
-                refresh();
-
-                assert(!gettimeofday(&stats_cur_time, NULL));
-                if(timediff(stress_test_stats.previous_update_time, stats_cur_time) >= (program_options.stats_interval * 1000000)) {
-                    stats_log(num_rounds, device_stats.num_bad_sectors);
-                }
-
-            }
-
-            if(restart_slice) {
-                // Unmark the sectors we've written in this slice so far
-                log_log("Device disconnect was detected during this slice -- restarting slice");
-                reset_sector_map_partial(get_slice_start(read_order[cur_slice]), last_sector);
-
-                cur_slice--;
-                redraw_sector_map();
-                refresh();
             }
         }
 
@@ -3321,7 +3667,7 @@ int main(int argc, char **argv) {
         for(cur_slice = 0; cur_slice < NUM_SLICES; cur_slice++) {
             rng_reseed(initial_seed + read_order[cur_slice] + (num_rounds * NUM_SLICES));
 
-            if(retriable_lseek(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
+            if(lseek_or_retry(&fd, get_slice_start(read_order[cur_slice]) * device_stats.sector_size, &device_was_disconnected) == -1) {
                 main_thread_status = MAIN_THREAD_STATUS_ENDING;
                 print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_SEEK_ERROR);
                 cleanup();
@@ -3360,65 +3706,13 @@ int main(int argc, char **argv) {
                     embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
                 }
 
-                while(bytes_left_to_write) {
-                    handle_key_inputs(NULL);
-                    wait_for_file_lock(NULL);
+                if(endurance_test_read_block(&fd, cur_sector, cur_sectors_per_block, compare_buf, &device_was_disconnected)) {
+                    main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                         ABORT_REASON_READ_ERROR);
 
-                    num_sectors_to_write = get_max_writable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
-                    if(num_sectors_to_read) {
-                        if((ret = retriable_read(&fd, compare_buf + (cur_block_size - bytes_left_to_write), bytes_left_to_write, lseek(fd, 0, SEEK_CUR))) == -1) {
-                            if(fd == -1) {
-                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                                    ABORT_REASON_READ_ERROR);
-
-                                cleanup();
-                                return 0;
-                            } else {
-                                // Mark this sector as bad and skip over it
-                                if(!is_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size))) {
-                                    snprintf(msg_buffer, sizeof(msg_buffer), "Read error on sector %lu; marking sector bad", cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                    log_log(msg_buffer);
-                                }
-
-                                mark_sector_bad(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size));
-                                bytes_left_to_write -= device_stats.sector_size;
-
-                                if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
-                                    // Give up if we can't seek
-                                    main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
-                                    cleanup();
-                                    return 0;
-                                }
-
-                                continue;
-                            }
-                        }
-
-                        bytes_left_to_write -= ret;
-                        device_stats.bytes_since_last_status_update += ret;
-                        sectors_read += ret / device_stats.sector_size;
-                    }
-
-                    if(bytes_left_to_write) {
-                        num_sectors_to_write = get_max_unwritable_sectors(cur_sector + ((cur_block_size - bytes_left_to_write) / device_stats.sector_size), bytes_left_to_write / device_stats.sector_size);
-                        if(num_sectors_to_write) {
-                            memset(compare_buf + (cur_block_size - bytes_left_to_write), 0, num_sectors_to_write * device_stats.sector_size);
-                            bytes_left_to_write -= num_sectors_to_write * device_stats.sector_size;
-
-                            // Seek past the unwritable sectors
-                            if((retriable_lseek(&fd, (cur_sector * device_stats.sector_size) + (cur_block_size - bytes_left_to_write), &device_was_disconnected)) == -1) {
-                                // Give up if we can't seek
-                                main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                                print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
-                                cleanup();
-                                return 0;
-                            }
-                        }
-                    }
-
-                    print_status_update();
+                    cleanup();
+                    return 0;
                 }
 
                 mark_sectors_read(cur_sector, cur_sector + cur_sectors_per_block);
@@ -3428,15 +3722,17 @@ int main(int argc, char **argv) {
                 for(j = 0; j < cur_block_size; j += device_stats.sector_size) {
                     handle_key_inputs(NULL);
                     if(memcmp(buf + j, compare_buf + j, device_stats.sector_size)) {
-                        num_bad_sectors_this_round++;
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             if(!memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
+                                // The data in the sector is all zeroes
                                 snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (sector read as all 0x00's); marking sector bad", cur_sector + (j / device_stats.sector_size));
                                 log_log(msg_buffer);
                             } else if(!memcmp(compare_buf + j, ff_buf, device_stats.sector_size)) {
+                                // The data in the sector is all 0xff's
                                 snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (sector read as all 0xff's); marking sector bad", cur_sector + (j / device_stats.sector_size));
                                 log_log(msg_buffer);
                             } else if(calculate_crc32c(0, compare_buf + j, device_stats.sector_size)) {
+                                // The CRC-32 embedded in the sector data doesn't match the calculated CRC-32
                                 snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (CRC32 mismatch; embedded value was 0x%08x, calculated value was 0x%08x), marking sector bad",
                                          cur_sector + (j / device_stats.sector_size), get_embedded_crc32c(compare_buf + j, device_stats.sector_size),
                                          calculate_crc32c(0, compare_buf + j, device_stats.sector_size - sizeof(uint32_t)));
