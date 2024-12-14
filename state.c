@@ -397,6 +397,12 @@ int load_state() {
     size_t detected_size, sector_size, k, l;
     char *uuid_str = NULL;
 
+    // A few temp variables to hold values for volatile variables (so that we
+    // don't get in trouble with GCC)
+    int64_t tmp_num_rounds = 0;
+    uint64_t tmp_bytes_written = 0;
+    uint64_t tmp_bytes_read = 0;
+
     // A bunch of constants for the JSON pointers to our JSON object
     const char *version_ptr = "/version";
     const char *device_uuid_ptr = "/device_uuid";
@@ -605,9 +611,9 @@ int load_state() {
         &sector_display.sector_map,
         bod_buffer,
         mod_buffer,
-        &num_rounds,
-        &state_data.bytes_read,
-        &state_data.bytes_written,
+        &tmp_num_rounds,
+        &tmp_bytes_read,
+        &tmp_bytes_written,
         &state_data.first_failure_round,
         &state_data.ten_percent_failure_round,
         &state_data.twenty_five_percent_failure_round
@@ -829,6 +835,10 @@ int load_state() {
         uuid_parse(uuid_str, device_stats.device_uuid);
         free(uuid_str);
     }
+
+    num_rounds = tmp_num_rounds;
+    state_data.bytes_read = tmp_bytes_read;
+    state_data.bytes_written = tmp_bytes_written;
 
     json_object_put(root);
     return LOAD_STATE_SUCCESS;
