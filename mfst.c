@@ -69,6 +69,10 @@ volatile main_thread_status_type main_thread_status;
 
 volatile int log_log_lock = 0;
 
+static struct timeval stats_cur_time;
+static uint64_t num_bad_sectors;
+static uint64_t num_bad_sectors_this_round;
+
 // Scratch buffer for messages; we're allocating it statically so that we can
 // still log messages in case of memory shortages
 static char msg_buffer[512];
@@ -3002,8 +3006,8 @@ int main(int argc, char **argv) {
     char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
     struct timeval speed_start_time;
     struct timeval rng_init_time;
-    uint64_t num_bad_sectors, sectors_read, cur_sectors_per_block, last_sector;
-    uint64_t num_bad_sectors_this_round, num_good_sectors_this_round;
+    uint64_t sectors_read, cur_sectors_per_block, last_sector;
+    uint64_t num_good_sectors_this_round;
     uint64_t cur_slice, i, j;
     int *read_order;
     int op_retry_count; // How many times have we tried the same operation without success?
