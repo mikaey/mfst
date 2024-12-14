@@ -332,14 +332,29 @@
 #define SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND 0x02
 #define SECTOR_MAP_FLAG_FAILED             0x01
 
+// Log levels
+#define SEVERITY_LEVEL_INFO          0
+#define SEVERITY_LEVEL_ERROR         1
+#define SEVERITY_LEVEL_WARNING       2
+#define SEVERITY_LEVEL_DEBUG         3
+#define SEVERITY_LEVEL_DEBUG_VERBOSE 4
+
 /**
  * Log the given string to the log file, if the log file is open.  If curses
  * mode is turned off, also log the given string to stdout.  The time is
  * prepended to the message, and a newline is appended to the message.
  *
- * @param msg       The null-terminated string to write to the log file.
+ * This function is thread-safe.
+ *
+ * @param funcname  The name of the calling function.  May be NULL.  If not set
+ *                  to NULL, it will be included in the message.
+ * @param severity  The severity of the message to be logged.
+ * @param msg       The message number (e.g., the index of the message to be
+ *                  logged in the log_file_messages array).
+ * @param ...       Parameters for any printf-style format specifiers that
+ *                  appear in the message.
  */
-void log_log(char *msg);
+void log_log(const char *funcname, int severity, int msg, ...);
 
 /**
  * Returns the maximum number of contiguous writable sectors that can be written

@@ -11,6 +11,7 @@
 #include <uuid/uuid.h>
 
 #include "base64.h"
+#include "messages.h"
 #include "mfst.h"
 
 /**
@@ -391,7 +392,6 @@ int save_state() {
 int load_state() {
     struct stat statbuf;
     struct json_object *root, *obj;
-    char str[256];
     int i, version = 1;
     char *buffer;
     size_t detected_size, sector_size, k, l;
@@ -630,18 +630,16 @@ int load_state() {
 
     if(stat(program_options.state_file, &statbuf) == -1) {
         if(errno == ENOENT) {
-            log_log("load_state(): state file not present");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STATE_FILE_MISSING);
             return LOAD_STATE_FILE_DOES_NOT_EXIST;
         } else {
-            snprintf(str, sizeof(str), "load_state(): unable to stat() state file: %m");
-            log_log(str);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STAT_ERROR, strerror(errno));
             return LOAD_STATE_LOAD_ERROR;
         }
     }
 
     if(!(root = json_object_from_file(program_options.state_file))) {
-        snprintf(str, sizeof(str), "load_state(): Unable to load state file: %s", json_util_get_last_err());
-        log_log(str);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STATE_FILE_JSON_LOAD_ERROR, json_util_get_last_err());
         return LOAD_STATE_LOAD_ERROR;
     }
 
@@ -649,8 +647,7 @@ int load_state() {
     for(i = 0; all_props[i]; i++) {
         // Make sure required properties are present in the file.
         if(required_props[i] && test_json_pointer(root, all_props[i])) {
-            snprintf(str, sizeof(str), "load_state(): Rejecting state file: required property %s is missing from JSON", all_props[i]);
-            log_log(str);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_REQUIRED_PROPERTY_MISSING, all_props[i]);
             json_object_put(root);
             return LOAD_STATE_LOAD_ERROR;
         }
@@ -664,8 +661,7 @@ int load_state() {
 
             if((prop_types[i] == json_type_double && json_object_get_type(obj) != json_type_int && json_object_get_type(obj) != json_type_double) ||
                 (prop_types[i] != json_type_double && json_object_get_type(obj) != prop_types[i])) {
-                snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s has an incorrect data type", all_props[i]);
-                log_log(str);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_HAS_WRONG_DATA_TYPE, all_props[i]);
                 free_buffers();
 
                 return LOAD_STATE_LOAD_ERROR;
@@ -675,28 +671,24 @@ int load_state() {
             // than 0 characters in length
             if(prop_types[i] == json_type_int) {
                 if(json_object_get_uint64(obj) == 0) {
-                    snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
-                    log_log(str);
-                    free_buffers();
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_UNPARSEABLE_OR_ZERO, all_props[i]);
 
+                    free_buffers();
                     return LOAD_STATE_LOAD_ERROR;
                 }
             } else if(prop_types[i] == json_type_double) {
                 if(json_object_get_double(obj) <= 0) {
-                    snprintf(str, sizeof(str), "load_state(): Rejecting state file: property %s is unparseable or zero", all_props[i]);
-                    log_log(str);
-                    free_buffers();
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_UNPARSEABLE_OR_ZERO, all_props[i]);
 
+                    free_buffers();
                     return LOAD_STATE_LOAD_ERROR;
                 }
             } else if(prop_types[i] == json_type_string) {
                 // Go ahead and copy it over to a buffer
-                buffers[i] = malloc(json_object_get_string_len(obj) + 1);
-                if(!buffers[i]) {
-                    snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %m");
-                    log_log(str);
-                    free_buffers();
+                if(!(buffers[i] = strdup(json_object_get_string(obj)))) {
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
 
+                    free_buffers();
                     return LOAD_STATE_LOAD_ERROR;
                 }
 
@@ -706,10 +698,9 @@ int load_state() {
                     // Base64-decode it and put that into buffers[i] instead
                     buffer = base64_decode(buffers[i], json_object_get_string_len(obj), &buffer_lens[i]);
                     if(!buffer) {
-                        snprintf(str, sizeof(str), "load_state(): Rejecting state file: unable to Base64-decode %s", all_props[i]);
-                        log_log(str);
-                        free_buffers();
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_UNABLE_TO_BASE64_DECODE, all_props[i]);
 
+                        free_buffers();
                         return LOAD_STATE_LOAD_ERROR;
                     }
 
@@ -759,20 +750,18 @@ int load_state() {
 
     for(i = 0; all_props[i]; i++) {
         if(base64_props[i] && (buffer_lens[i] != expected_lens[i])) {
-            snprintf(str, sizeof(str), "load_state(): Rejecting state file: %s contains the wrong amount of data", all_props[i]);
-            log_log(str);
-            free_buffers();
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_WRONG_NUMBER_OF_BYTES, all_props[i], expected_lens[i], buffer_lens[i]);
 
+            free_buffers();
             return LOAD_STATE_LOAD_ERROR;
         }
     }
 
     // Allocate memory for the sector map, which we'll need to unpack later
     if(!(sector_display.sector_map = malloc(detected_size / sector_size))) {
-        snprintf(str, sizeof(str), "load_state(): malloc() returned an error: %m");
-        log_log(str);
-        free_buffers();
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
 
+        free_buffers();
         return LOAD_STATE_LOAD_ERROR;
     }
 

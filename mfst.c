@@ -9,6 +9,7 @@
 #include <linux/fs.h>
 #include <locale.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
@@ -22,6 +23,7 @@
 #include "crc32.h"
 #include "device.h"
 #include "lockfile.h"
+#include "messages.h"
 #include "mfst.h"
 #include "ncurses.h"
 #include "rng.h"
@@ -71,7 +73,11 @@ volatile int log_log_lock = 0;
 // still log messages in case of memory shortages
 static char msg_buffer[512];
 
-void log_log(char *msg) {
+void log_log(const char *funcname, int severity, int msg, ...) {
+    va_list ap;
+
+    va_start(ap, msg);
+
     time_t now = time(NULL);
     char *t = ctime(&now);
     // Get rid of the newline on the end of the time
@@ -84,15 +90,30 @@ void log_log(char *msg) {
     log_log_lock = 1;
 
     if(file_handles.log_file) {
-        fprintf(file_handles.log_file, "[%s] %s\n", t, msg);
+        fprintf(file_handles.log_file, "[%s] [%s] ", t, severity == 0 ? "INFO" : (severity == 1 ? "ERROR" : (severity == 2 ? "WARNING" : "DEBUG")));
+
+        if(funcname) {
+            fprintf(file_handles.log_file, "%s(): ", funcname);
+        }
+
+        vfprintf(file_handles.log_file, log_file_messages[msg], ap);
+        fprintf(file_handles.log_file, "\n");
         fflush(file_handles.log_file);
     }
 
     if(program_options.no_curses) {
-        printf("[%s] %s\n", t, msg);
+        printf("[%s] [%s] ", t, severity == 0 ? "INFO" : (severity == 1 ? "ERROR" : (severity == 2 ? "WARNING" : "DEBUG")));
+
+        if(funcname) {
+            printf("%s(): ", funcname);
+        }
+
+        vprintf(log_file_messages[msg], ap);
+        printf("\n");
         syncfs(1);
     }
 
+    va_end(ap);
     log_log_lock = 0;
 }
 
@@ -692,7 +713,7 @@ void wait_for_file_lock(WINDOW **topwin) {
     if(is_lockfile_locked()) {
         previous_status = main_thread_status;
         main_thread_status = MAIN_THREAD_STATUS_PAUSED;
-        log_log("Detected another copy of this program is running speed tests.  Suspending execution.");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WAITING_FOR_FILE_LOCK);
         if(!program_options.no_curses) {
             if(topwin) {
                 assert(memfile = fmemopen(NULL, 131072, "r+"));
@@ -724,7 +745,7 @@ void wait_for_file_lock(WINDOW **topwin) {
             }
         }
 
-        log_log("Other program is finished.  Resuming execution.");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FILE_LOCK_RELEASED);
         main_thread_status = previous_status;
 
         // We're just going to redraw the whole thing, so we don't need to
@@ -761,7 +782,7 @@ double profile_random_number_generator() {
     char rate_str[16];
     WINDOW *window;
 
-    log_log("profile_random_number_generator(): Profiling random number generator");
+    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_PROFILING_RNG);
     window = message_window(stdscr, NULL, "Profiling random number generator...", 0);
 
     // Generate random numbers for 5 seconds.
@@ -780,10 +801,8 @@ double profile_random_number_generator() {
     // Turn total number of random numbers into total number of bytes.
     total_random_numbers_generated *= sizeof(int);
 
-    log_log("profile_random_number_generator(): Finished profiling random number generator.");
-    snprintf(msg_buffer, sizeof(msg_buffer), "profile_random_number_generator(): System can generate %s of random data.",
-        format_rate(((double) total_random_numbers_generated) / (((double) timediff(start_time, end_time)) / 1000000.0), rate_str, sizeof(rate_str)));
-    log_log(msg_buffer);
+    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DONE_PROFILING_RNG);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_RNG_STATS, format_rate(((double) total_random_numbers_generated) / (((double) timediff(start_time, end_time)) / 1000000.0), rate_str, sizeof(rate_str)));
 
     if(window) {
         erase_and_delete_window(window);
@@ -791,7 +810,7 @@ double profile_random_number_generator() {
 
     if(total_random_numbers_generated < 471859200) {
         // Display a warning message to the user
-        log_log("profile_random_number_generator(): WARNING: System is too slow to test all possible speed qualifications.  Speed test results may be inaccurate.");
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_RNG_TOO_SLOW);
         snprintf(msg_buffer, sizeof(msg_buffer),
                  "Your system is only able to generate %s of random data.  "
                  "The device may appear to be slower than it actually is, "
@@ -839,6 +858,7 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
     int iret;
 
     if(ret = posix_memalign((void **) &aligned_buf, sysconf(_SC_PAGESIZE), len)) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(ret));
         return -1;
     }
 
@@ -868,7 +888,7 @@ int write_data_to_device(int fd, void *buf, uint64_t len, uint64_t optimal_block
 }
 
 void io_error_during_size_probe() {
-    log_log("probe_device_size(): Aborting device size test");
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_DEVICE_SIZE_TEST_DUE_TO_IO_ERROR);
 
     message_window(stdscr, WARNING_TITLE,
                    "We encountered an error while trying to determine the size "
@@ -880,9 +900,8 @@ void io_error_during_size_probe() {
 }
 
 void memory_error_during_size_probe(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): posix_memalign() returned an error: %s", strerror(errnum));
-    log_log(msg_buffer);
-    log_log("probe_device_size(): Aborting device size test");
+    log_log("probe_device_size", SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(errnum));
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_DEVICE_SIZE_TEST_DUE_TO_MEMORY_ERROR);
 
     message_window(stdscr, WARNING_TITLE,
                    "We encountered an error while trying to allocate memory to "
@@ -908,7 +927,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     const uint64_t buf_size = slice_size * num_slices;
     WINDOW *window;
 
-    log_log("probe_device_size(): Probing for actual device size");
+    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_PROBING_FOR_DEVICE_SIZE);
     window = message_window(stdscr, NULL, "Probing for actual device size...", 0);
 
     if(iret = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), buf_size)) {
@@ -969,7 +988,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
             return 0;            
@@ -980,7 +999,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            log_log("probe_device_size(): write() returned an error: %s", strerror(errnum));
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
             return 0;
@@ -1002,7 +1021,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
             return 0;
@@ -1030,7 +1049,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                     // Are we at the very first block?
                     multifree(2, buf, readbuf);
                     if(j == 0) {
-                        log_log("probe_device_size(): Unable to determine device size: first sector isn't stable");
+                        log_log(__func__, SEVERITY_LEVEL_WARNING, MSG_FIRST_SECTOR_ISNT_STABLE);
                         erase_and_delete_window(window);
                         message_window(stdscr, WARNING_TITLE,
                                        "The first sector of this device isn't "
@@ -1050,9 +1069,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                         return 0;
                     } else {
                         erase_and_delete_window(window);
-
-                        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", j);
-                        log_log(msg_buffer);
+                        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_SIZE, j);
 
                         return j;
                     }
@@ -1061,8 +1078,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                         erase_and_delete_window(window);
                         multifree(2, buf, readbuf);
 
-                        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", (initial_sectors[i] * device_stats.sector_size) + j);
-                        log_log(msg_buffer);
+                        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_SIZE, (initial_sectors[i] * device_stats.sector_size) + j);
 
                         return (initial_sectors[i] * device_stats.sector_size) + j;
                     } else {
@@ -1082,8 +1098,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
         erase_and_delete_window(window);
         multifree(2, buf, readbuf);
 
-        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", num_sectors * device_stats.sector_size);
-        log_log(msg_buffer);
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_SIZE, num_sectors * device_stats.sector_size);
 
         return num_sectors * device_stats.sector_size;
     }
@@ -1112,7 +1127,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
             return 0;
@@ -1125,7 +1140,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            log_log("probe_device_size(): write() returned an error: %s", strerror(errnum));
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
             return 0;
@@ -1136,7 +1151,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             erase_and_delete_window(window);
             multifree(2, buf, readbuf);
 
-            log_log("probe_device_size(): lseek() returned an error: %s", strerror(errnum));
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
             return 0;
@@ -1165,9 +1180,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
                         erase_and_delete_window(window);
                         multifree(2, buf, readbuf);
 
-                        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size",
-                            (cur * device_stats.sector_size) + (i * slice_size) + j);
-                        log_log(msg_buffer);
+                        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_SIZE, (cur * device_stats.sector_size) + (i * slice_size) + j);
 
                         return (cur * device_stats.sector_size) + (i * slice_size) + j;
                     } else {
@@ -1188,16 +1201,14 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     erase_and_delete_window(window);
     multifree(2, buf, readbuf);
 
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): Device is %'lu bytes in size", low * device_stats.sector_size);
-    log_log(msg_buffer);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_SIZE, low * device_stats.sector_size);
 
     return low * device_stats.sector_size;
 }
 
 void lseek_error_during_speed_test(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): lseek() returned an error: %s", strerror(errnum));
-    log_log(msg_buffer);
-    log_log("probe_device_size(): Aborting speed tests");
+    log_log("probe_device_speeds", SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errnum));
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_SPEED_TEST_DUE_TO_IO_ERROR);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We got an error while trying to move around the device.  It "
@@ -1211,9 +1222,8 @@ void lseek_error_during_speed_test(int errnum) {
 }
 
 void io_error_during_speed_test(char write, int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): %s() returned an error: %s", write ? "write" : "read", strerror(errnum));
-    log_log(msg_buffer);
-    log_log("probe_device_size(): Aborting speed tests");
+    log_log("probe_device_speeds", SEVERITY_LEVEL_DEBUG, write ? MSG_WRITE_ERROR : MSG_READ_ERROR, strerror(errnum));
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_SPEED_TEST_DUE_TO_IO_ERROR);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We got an error while trying to %s the device.  It could be that "
@@ -1242,9 +1252,7 @@ int probe_device_speeds(int fd) {
 
     if(lock_lockfile()) {
         local_errno = errno;
-        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_size(): lockf() returned an error: %s", strerror(local_errno));
-        log_log(msg_buffer);
-        log_log("probe_device_size(): Skipping optimal write block size test.");
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_SPEED_TEST_DUE_TO_LOCK_ERROR);
 
         snprintf(msg_buffer, sizeof(msg_buffer),
                  "Unable to obtain a lock on the lockfile.  Unfortunately, "
@@ -1256,10 +1264,8 @@ int probe_device_speeds(int fd) {
     }
 
     if(local_errno = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), device_stats.block_size < 4096 ? 4096 : device_stats.block_size)) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): posix_memalign() returned an error: %s", strerror(local_errno));
-        log_log(msg_buffer);
-        log_log("probe_device_speeds(): Aborting speed tests");
-
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(local_errno));
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_SPEED_TEST_DUE_TO_MEMORY_ERROR);
 
         unlock_lockfile();
 
@@ -1273,7 +1279,7 @@ int probe_device_speeds(int fd) {
         return -1;
     }
 
-    log_log("probe_device_speeds(): Beginning speed tests");
+    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_SPEED_TEST_STARTING);
     window = message_window(stdscr, NULL, "Testing read/write speeds...", 0);
 
     for(rd = 0; rd < 2; rd++) {
@@ -1366,30 +1372,17 @@ int probe_device_speeds(int fd) {
                 }
             }
 
-            if(rd && wr) {
-                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Random write speed    : %0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs,
-                    rate, sizeof(rate)));
-                log_log(msg_buffer);
-
-                device_speeds.random_write_iops = ctr / secs;
-            } else if(rd && !wr) {
-                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Random read speed     : %0.2f IOPS/s (%s)", ctr / secs, format_rate((ctr * 4096) / secs,
-                    rate, sizeof(rate)));
-                log_log(msg_buffer);
-
-                device_speeds.random_read_iops = ctr / secs;
-            } else if(!rd && wr) {
-                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Sequential write speed: %s", format_rate(ctr / secs, rate, sizeof(rate)));
-                log_log(msg_buffer);
-
-                device_speeds.sequential_write_speed = ctr / secs;
-                speed_qualifications_shown = 1;
-                print_class_marking_qualifications();
+            if(rd) {
+                log_log(NULL, SEVERITY_LEVEL_INFO, wr ? MSG_SPEED_TEST_RESULTS_RANDOM_WRITE_SPEED : MSG_SPEED_TEST_RESULTS_RANDOM_READ_SPEED, ctr / secs, format_rate((ctr * 4096) / secs, rate, sizeof(rate)));
+                *(wr ? &device_speeds.random_write_iops : &device_speeds.random_read_iops) = ctr / secs;
             } else {
-                snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds(): Sequential read speed : %s", format_rate(ctr / secs, rate, sizeof(rate)));
-                log_log(msg_buffer);
+                log_log(NULL, SEVERITY_LEVEL_INFO, wr ? MSG_SPEED_TEST_RESULTS_SEQUENTIAL_WRITE_SPEED : MSG_SPEED_TEST_RESULTS_SEQUENTIAL_READ_SPEED, format_rate(ctr / secs, rate, sizeof(rate)));
+                *(wr ? &device_speeds.sequential_write_speed : &device_speeds.sequential_read_speed) = ctr / secs;
 
-                device_speeds.sequential_read_speed = ctr / secs;
+                if(wr) {
+                    speed_qualifications_shown = 1;
+                    print_class_marking_qualifications();
+                }
             }
         }
     }
@@ -1405,39 +1398,26 @@ int probe_device_speeds(int fd) {
     // because we're going to use print_class_marking_qualifications() to
     // repaint them on the display, and we don't want to print them to the log
     // a second time if they've already been printed out.
-    log_log("probe_device_speeds(): Speed test results:");
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 2 marking : %s", device_speeds.sequential_write_speed >= 2000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 4 marking : %s", device_speeds.sequential_write_speed >= 4000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 6 marking : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for Class 10 marking: %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    log_log("probe_device_speeds():");
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for U1 marking      : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for U3 marking      : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    log_log("probe_device_speeds():");
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V6 marking      : %s", device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V10 marking     : %s", device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V30 marking     : %s", device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V60 marking     : %s", device_speeds.sequential_write_speed >= 60000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for V90 marking     : %s", device_speeds.sequential_write_speed >= 90000000 ? "Yes" : "No");
-    log_log(msg_buffer);
-    log_log("probe_device_speeds():");
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for A1 marking      : %s",
-        (device_speeds.sequential_write_speed >= 10485760 && device_speeds.random_read_iops >= 1500 && device_speeds.random_write_iops >= 500) ? "Yes" : "No");
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "probe_device_speeds():   Qualifies for A2 marking      : %s",
-        (device_speeds.sequential_write_speed >= 10485760 && device_speeds.random_read_iops >= 4000 && device_speeds.random_write_iops >= 2000) ? "Yes" : "No");
-    log_log(msg_buffer);
-    log_log("probe_device_speeds():");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_SPEED_CLASS_QUALIFICATION_RESULTS);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_CLASS_2, device_speeds.sequential_write_speed >= 2000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_CLASS_4, device_speeds.sequential_write_speed >= 4000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_CLASS_6, device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_CLASS_10, device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_BLANK_LINE);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_U1, device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_U3, device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_BLANK_LINE);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_V6, device_speeds.sequential_write_speed >= 6000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_V10, device_speeds.sequential_write_speed >= 10000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_V30, device_speeds.sequential_write_speed >= 30000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_V60, device_speeds.sequential_write_speed >= 60000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_V90, device_speeds.sequential_write_speed >= 90000000 ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_BLANK_LINE);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_A1,
+            (device_speeds.sequential_write_speed >= 10485760 && device_speeds.random_read_iops >= 1500 && device_speeds.random_write_iops >= 500) ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_SPEED_TEST_QUALIFIES_FOR_A2,
+            (device_speeds.sequential_write_speed >= 10485760 && device_speeds.random_read_iops >= 4000 && device_speeds.random_write_iops >= 2000) ? "Yes" : "No");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_BLANK_LINE);
 
     free(buf);
     return 0;
@@ -1488,27 +1468,26 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
     char *out_messages[7];
     int i;
 
-    switch(abort_reason) {
-    case ABORT_REASON_READ_ERROR:
-        strncpy(msg_buffer, "read error", sizeof(msg_buffer)); break;
-    case ABORT_REASON_WRITE_ERROR:
-        strncpy(msg_buffer, "write error", sizeof(msg_buffer)); break;
-    case ABORT_REASON_SEEK_ERROR:
-        strncpy(msg_buffer, "seek error", sizeof(msg_buffer)); break;
-    case ABORT_REASON_FIFTY_PERCENT_FAILURE:
-        strncpy(msg_buffer, "50% of sectors have failed", sizeof(msg_buffer)); break;
-    case ABORT_REASON_DEVICE_REMOVED:
-        strncpy(msg_buffer, "device went away", sizeof(msg_buffer)); break;
-    default:
-        strncpy(msg_buffer, "unknown", sizeof(msg_buffer)); break;
-    }
+    const char *abort_reasons[] = {
+                                  "(unknown)",
+                                  "read_error",
+                                  "write error",
+                                  "seek error",
+                                  "50% of sectors have failed",
+                                  "device went away"
+    };
 
-    snprintf(messages[0], sizeof(messages[0]), "Reason for aborting test             : %s", msg_buffer);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_COMPLETE);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_REASON_FOR_ABORTING_TEST, abort_reason > 5 ? abort_reasons[0] : abort_reasons[abort_reason]);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_COMPLETED, rounds_completed);
+
+    snprintf(messages[0], sizeof(messages[0]), "Reason for aborting test             : %s", abort_reason > 5 ? abort_reasons[0] : abort_reasons[abort_reason]);
     out_messages[0] = messages[0];
     snprintf(messages[1], sizeof(messages[1]), "Number of read/write cycles completed: %'lu", rounds_completed);
     out_messages[1] = messages[1];
 
     if(state_data.first_failure_round != -1) {
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_FIRST_FAILURE, state_data.first_failure_round);
         snprintf(messages[2], sizeof(messages[2]), "Read/write cycles to first failure   : %'lu", state_data.first_failure_round);
         out_messages[2] = messages[2];
     } else {
@@ -1516,6 +1495,7 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
     }
 
     if(state_data.ten_percent_failure_round != -1) {
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_10_PERCENT_FAILURE, state_data.ten_percent_failure_round);
         snprintf(messages[3], sizeof(messages[3]), "Read/write cycles to 10%% failure     : %'lu", state_data.ten_percent_failure_round);
         out_messages[3] = messages[3];
     } else {
@@ -1523,6 +1503,7 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
     }
 
     if(state_data.twenty_five_percent_failure_round != -1) {
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_25_PERCENT_FAILURE, state_data.twenty_five_percent_failure_round);
         snprintf(messages[4], sizeof(messages[4]), "Read/write cycles to 25%% failure     : %'lu", state_data.twenty_five_percent_failure_round);
         out_messages[4] = messages[4];
     } else {
@@ -1530,6 +1511,7 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
     }
 
     if(fifty_percent_failure_round != -1) {
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_50_PERCENT_FAILURE, fifty_percent_failure_round);
         snprintf(messages[5], sizeof(messages[5]), "Read/write cycles to 50%% failure     : %'lu", fifty_percent_failure_round);
         out_messages[5] = messages[5];
     } else {
@@ -1537,13 +1519,6 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
     }
 
     out_messages[6] = NULL;
-
-    log_log("Stress test complete");
-
-    for(i = 0; out_messages[i]; i++) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "  %s", out_messages[i]);
-        log_log(msg_buffer);
-    }
 
     // Clear out msg_buffer
     msg_buffer[0] = 0;
@@ -1847,13 +1822,14 @@ int handle_device_disconnect(int *fd, off_t position, int seek_after_reconnect) 
         *fd = -1;
     }
 
-    window = device_disconnected_message(__func__);
+    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_DISCONNECTED);
+    window = device_disconnected_message();
     ret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, sector_display.sector_map, &new_device_name, &new_device_num, fd);
     handle_key_inputs(window);
     main_thread_status = previous_status;
 
     if(ret != -1) {
-        log_log("handle_device_disconnect(): Device reconnected.");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RECONNECTED, new_device_name);
 
         if(program_options.device_name) {
             free(program_options.device_name);
@@ -1864,7 +1840,7 @@ int handle_device_disconnect(int *fd, off_t position, int seek_after_reconnect) 
 
         if(seek_after_reconnect) {
             if(lseek_or_reset_device(fd, position, NULL) == -1) {
-                log_log("handle_device_disconnect(): Failed to seek to previous position after reopening device");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_AFTER_DEVICE_RESET_FAILED);
 
                 erase_and_delete_window(window);
                 redraw_screen();
@@ -1878,7 +1854,7 @@ int handle_device_disconnect(int *fd, off_t position, int seek_after_reconnect) 
 
         return 0;
     } else {
-        log_log("handle_device_disconnect(): Failed to re-open device!");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FAILED_TO_REOPEN_DEVICE);
 
         erase_and_delete_window(window);
         redraw_screen();
@@ -1921,8 +1897,7 @@ off_t lseek_or_retry(int *fd, off_t position, int *device_was_disconnected) {
     main_thread_status_type previous_status = main_thread_status;
 
     if((ret = lseek(*fd, position, SEEK_SET)) == -1) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "lseek_or_retry(): seek error while attempting to seek to sector %lu", position / device_stats.sector_size);
-        log_log(msg_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_TO_SECTOR_ERROR, position / device_stats.sector_size);
     }
 
     while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
@@ -1988,14 +1963,15 @@ int64_t lseek_or_reset_device(int *fd, off_t position, int *device_was_disconnec
             }
         } else {
             if(can_reset_device(device_stats.device_num)) {
-                window = resetting_device_message(__func__);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_ATTEMPTING_DEVICE_RESET);
+                window = resetting_device_message();
 
                 main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                 *fd = reset_device(*fd);
                 main_thread_status = previous_status;
 
                 if(*fd == -1) {
-                    log_log("lseek_or_reset_device(): Device reset failed!");
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RESET_FAILED);
 
                     erase_and_delete_window(window);
                     redraw_screen();
@@ -2003,7 +1979,7 @@ int64_t lseek_or_reset_device(int *fd, off_t position, int *device_was_disconnec
                     return -1;
                 }
 
-                log_log("lseek_or_reset_device(): Device reset successfully.");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RESET_SUCCESS);
                 retry_count++;
 
                 ret = lseek_or_retry(fd, position, device_was_disconnected);
@@ -2014,7 +1990,7 @@ int64_t lseek_or_reset_device(int *fd, off_t position, int *device_was_disconnec
                 redraw_screen();
             } else {
                 // Insta-fail
-                log_log("read_or_reset_device(): Don't know how to reset this device");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DONT_KNOW_HOW_TO_RESET_DEVICE);
                 return -1;
             }
         }
@@ -2056,8 +2032,7 @@ int64_t read_or_retry(int *fd, void *buf, uint64_t count, off_t position) {
 
     ret = read(*fd, buf, count);
     if(ret == -1) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "read_or_retry(): read error during sector %lu", position / device_stats.sector_size);
-        log_log(msg_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_READ_ERROR_IN_SECTOR, position / device_stats.sector_size);
     }
 
     while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
@@ -2113,21 +2088,22 @@ int64_t read_or_reset_device(int *fd, void *buf, uint64_t count, off_t position)
             }
         } else {
             if(can_reset_device(device_stats.device_num)) {
-                window = resetting_device_message(__func__);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_ATTEMPTING_DEVICE_RESET);
+                window = resetting_device_message();
 
                 main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                 *fd = reset_device(*fd);
                 main_thread_status = previous_status;
 
                 if(*fd == -1) {
-                    log_log("read_or_reset_device(): Device reset failed!");
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RESET_FAILED);
                     retry_count = MAX_RESET_RETRIES;
                 } else {
-                    log_log("read_or_reset_device(): Device reset successfully.");
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RESET_SUCCESS);
                     retry_count++;
 
                     if(lseek_or_retry(fd, position, NULL) == -1) {
-                        log_log("read_or_reset_device(): Failed to seek to previous position after re-opening device");
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_AFTER_DEVICE_RESET_FAILED);
                         erase_and_delete_window(window);
                         redraw_screen();
                         return -1;
@@ -2140,7 +2116,7 @@ int64_t read_or_reset_device(int *fd, void *buf, uint64_t count, off_t position)
                 redraw_screen();
             } else {
                 // Insta-fail
-                log_log("read_or_reset_device(): Don't know how to reset this device");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DONT_KNOW_HOW_TO_RESET_DEVICE);
                 return -1;
             }
         }
@@ -2160,8 +2136,7 @@ int64_t write_or_retry(int *fd, void *buf, uint64_t count, off_t position, int *
 
     ret = write(*fd, buf, count);
     if(ret == -1) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "write_or_retry(): write error during sector %lu", position / device_stats.sector_size);
-        log_log(msg_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR_IN_SECTOR, position / device_stats.sector_size);
     }
 
     while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
@@ -2176,7 +2151,7 @@ int64_t write_or_retry(int *fd, void *buf, uint64_t count, off_t position, int *
                     return -1;
                 }
             } else {
-                log_log("write_or_retry(): Device disconnected during first round of testing");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_ENDURANCE_TEST_DEVICE_DISCONNECTED_DURING_ROUND_1);
                 return -1;
             }
         } else {
@@ -2210,27 +2185,29 @@ int64_t write_or_reset_device(int *fd, void *buf, uint64_t count, off_t position
                     return -1;
                 }
             } else {
-                log_log("write_or_reset_device(): Device disconnected during first round of testing");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_ENDURANCE_TEST_DEVICE_DISCONNECTED_DURING_ROUND_1);
                 return -1;
             }
         } else {
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_ATTEMPTING_DEVICE_RESET);
+
             if(num_rounds > 0) {
                 if(can_reset_device(device_stats.device_num)) {
-                    window = resetting_device_message(__func__);
+                    window = resetting_device_message();
 
                     main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
                     *fd = reset_device(*fd);
                     main_thread_status = previous_status;
 
                     if(*fd == -1) {
-                        log_log("write_or_reset_device(): Device reset failed!");
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RESET_FAILED);
                         retry_count = MAX_RESET_RETRIES;
                     } else {
-                        log_log("write_or_reset_device(): Device reset successfully.");
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RESET_SUCCESS);
                         retry_count++;
 
                         if(lseek_or_retry(fd, position, device_was_disconnected) == -1) {
-                            log_log("write_or_reset_device(): Failed to seek to previous position after re-opening device");
+                            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_AFTER_DEVICE_RESET_FAILED);
                             erase_and_delete_window(window);
                             redraw_screen();
                             return -1;
@@ -2245,12 +2222,12 @@ int64_t write_or_reset_device(int *fd, void *buf, uint64_t count, off_t position
                     redraw_screen();
                 } else {
                     // Insta-fail
-                    log_log("write_or_reset_device(): Don't know how to reset this device");
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DONT_KNOW_HOW_TO_RESET_DEVICE);
                     return -1;
                 }
             } else {
                 // Insta-fail
-                log_log("write_or_reset_device(): Refusing to reset device during first round of testing");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_ENDURANCE_TEST_REFUSING_TO_RESET_DURING_ROUND_1);
                 return -1;
             }
         }
@@ -2359,38 +2336,26 @@ void log_sector_contents(uint64_t sector_num, int sector_size, char *expected_da
     char tmp[16];
     int i;
 
-    log_log("Expected data was:");
+    log_log(NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_ENDURANCE_TEST_EXPECTED_DATA_WAS);
 
-    for(i = 0; i < sector_size; i++) {
-        if(!(i % 16)) {
-            snprintf(msg_buffer, sizeof(msg_buffer), "    %016lx:", (sector_num * sector_size) + i);
-        }
-
-        snprintf(tmp, sizeof(tmp), " %02x%s", expected_data[i] & 0xff, (i % 16) == 7 ? "    " : "");
-        strcat(msg_buffer, tmp);
-
-        if((i % 16) == 15 || i == (sector_size - 1)) {
-            log_log(msg_buffer);
-        }
+    for(i = 0; i < sector_size; i += 16) {
+        // If, for some reason, the sector size isn't a multiple of 16, then
+        // make sure we don't overrun the expected_data buffer
+        memset(tmp, 0, 16);
+        memcpy(tmp, expected_data + i, (sector_size - i) >= 16 ? 16 : (sector_size - i));
+        log_log(NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_ENDURANCE_TEST_MISMATCHED_DATA_LINE, (sector_num * sector_size) + i, tmp[0] & 0xff, tmp[1] & 0xff, tmp[2] & 0xff, tmp[3] & 0xff, tmp[4] & 0xff, tmp[5] & 0xff, tmp[6] & 0xff, tmp[7] & 0xff, tmp[8] & 0xff, tmp[9] & 0xff, tmp[10] & 0xff, tmp[11] & 0xff, tmp[12] & 0xff, tmp[13] & 0xff, tmp[14] & 0xff, tmp[15] & 0xff);
     }
 
-    log_log("");
-    log_log("Actual data was:");
+    log_log(NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_BLANK_LINE);
+    log_log(NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_ENDURANCE_TEST_ACTUAL_DATA_WAS);
 
-    for(i = 0; i < sector_size; i++) {
-        if(!(i % 16)) {
-            snprintf(msg_buffer, sizeof(msg_buffer), "    %016lx:", (sector_num * sector_size) + i);
-        }
-
-        snprintf(tmp, sizeof(tmp), " %02x%s", actual_data[i] & 0xff, (i % 16) == 7 ? "    " : "");
-        strcat(msg_buffer, tmp);
-
-        if((i % 16) == 15 || i == (sector_size - 1)) {
-            log_log(msg_buffer);
-        }
+    for(i = 0; i < sector_size; i += 16) {
+        memset(tmp, 0, 16);
+        memcpy(tmp, actual_data + i, (sector_size - i) >= 16 ? 16 : (sector_size - i));
+        log_log(NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_ENDURANCE_TEST_MISMATCHED_DATA_LINE, (sector_num * sector_size) + i, tmp[0] & 0xff, tmp[1] & 0xff, tmp[2] & 0xff, tmp[3] & 0xff, tmp[4] & 0xff, tmp[5] & 0xff, tmp[6] & 0xff, tmp[7] & 0xff, tmp[8] & 0xff, tmp[9] & 0xff, tmp[10] & 0xff, tmp[11] & 0xff, tmp[12] & 0xff, tmp[13] & 0xff, tmp[14] & 0xff, tmp[15] & 0xff);
     }
 
-    log_log("");
+    log_log(NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_BLANK_LINE);
 }
 
 void state_file_error() {
@@ -2402,9 +2367,7 @@ void state_file_error() {
         "and just ignore the existing state file, then you can ignore this "
         "message.  Otherwise, you have %d seconds to hit Ctrl+C.";
 
-    log_log("WARNING: There was a problem loading the state file.  The existing state file");
-    log_log("will be ignored (and eventually overwritten).  If you don't want this to happen,");
-    log_log("you have 15 seconds to hit Ctrl+C to abort the program.");
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_STATE_FILE_LOAD_ERROR);
 
     snprintf(msg_buffer, sizeof(msg_buffer), warning_text, 15);
 
@@ -2441,14 +2404,11 @@ void show_initial_warning_message() {
         "overwritten -- multiple times.  If you're not OK with this, you have "
         "%d seconds to hit Ctrl+C before we start doing anything.";
 
-    log_log("WARNING: This program is DESTRUCTIVE.  It is designed to stress test storage");
-    log_log("devices (particularly flash media) to the point of failure.  If you let this");
-    log_log("program run for long enough, it WILL completely destroy the device and render it");
-    log_log("completely unusable.  Do not use it on any storage devices that you care about.");
-    log_log("");
-    snprintf(str, sizeof(str), "Any data on %s is going to be overwritten -- multiple times.  If you're", program_options.device_name);
-    log_log(str);
-    log_log("not OK with this, you have 15 seconds to hit Ctrl+C before we start doing anything.");
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_INITIAL_WARNING_PART_1);
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_BLANK_LINE);
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_INITIAL_WARNING_PART_2);
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_BLANK_LINE);
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_INITIAL_WARNING_PART_3, program_options.device_name);
 
     snprintf(msg_buffer, sizeof(msg_buffer), warning_text, program_options.device_name, 15);
     window = message_window(stdscr, WARNING_TITLE, msg_buffer, 0);
@@ -2472,30 +2432,29 @@ void show_initial_warning_message() {
 }
 
 void log_file_open_error(int errnum) {
-    if(!program_options.no_curses) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open log file %s: %s", program_options.log_file, strerror(errnum));
-        message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
-    } else {
-        printf("Got the following error while trying to open log file %s: %s\n", program_options.log_file, strerror(errnum));
-    }
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_LOG_FILE_OPEN_ERROR, program_options.log_file, strerror(errnum));
+
+    snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open log file %s: %s", program_options.log_file, strerror(errnum));
+    message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
 void lockfile_open_error(int errnum) {
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_LOCK_FILE_OPEN_ERROR, program_options.lock_file, strerror(errnum));
+
     snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open lock file %s: %s", program_options.lock_file, strerror(errnum));
-    log_log(msg_buffer);
     message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
 void stats_file_open_error(int errnum) {
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_STATS_FILE_OPEN_ERROR, program_options.stats_file, strerror(errnum));
+
     snprintf(msg_buffer, sizeof(msg_buffer), "Unable to open stats file %s: %s", program_options.stats_file, strerror(errnum));
-    log_log(msg_buffer);
     message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
 void no_working_gettimeofday(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling gettimeofday(): %s", strerror(errnum));
-    log_log(msg_buffer);
-    log_log("Unable to test -- your system doesn't have a working gettimeofday() call.");
+    log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_GETTIMEOFDAY_FAILED, strerror(errnum));
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_NO_WORKING_GETTIMEOFDAY);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We won't be able to test this device because your system doesn't "
@@ -2543,8 +2502,7 @@ int endurance_test_read_block(int *fd, uint64_t starting_sector, int num_sectors
                 } else {
                     // Mark this sector as bad and skip over it
                     if(!is_sector_bad(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size))) {
-                        snprintf(msg_buffer, sizeof(msg_buffer), "endurance_test_read_block(): Read error on sector %lu; marking sector unusable", starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size));
-                        log_log(msg_buffer);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_READ_ERROR_MARKING_SECTOR_UNUSABLE, starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size));
                     }
 
                     mark_sector_unwritable(starting_sector + ((block_size - bytes_left_to_read) / device_stats.sector_size));
@@ -2584,7 +2542,7 @@ int endurance_test_read_block(int *fd, uint64_t starting_sector, int num_sectors
 }
 
 void device_locate_error() {
-    log_log("An error occurred while trying to locate the device described in the state file.  Make sure you're running this program with sudo.");
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_DEVICE_LOCATE_ERROR);
     message_window(stdscr, ERROR_TITLE,
                    "An error occurred while trying to locate the device "
                    "described in the state file. (Make sure you're running "
@@ -2592,7 +2550,7 @@ void device_locate_error() {
 }
 
 void multiple_matching_devices_error() {
-    log_log("Multiple devices found that match the data in the state file.  Please specify which device you want to test on the command line.");
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_DEVICE_AMBIGUITY_ERROR);
     message_window(stdscr, ERROR_TITLE,
                    "There are multiple devices that match the data in the "
                    "state file.  Please specify which device you want to "
@@ -2600,9 +2558,7 @@ void multiple_matching_devices_error() {
 }
 
 void wrong_device_specified_error() {
-    log_log("The device specified on the command line does not match the device described in the state file.");
-    log_log("Please remove the device from the command line or specify a different device.");
-
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_WRONG_DEVICE_ERROR);
     message_window(stdscr, ERROR_TITLE,
                    "The device you specified on the command line does not "
                    "match the device described in the state file.  If you run "
@@ -2612,7 +2568,7 @@ void wrong_device_specified_error() {
 }
 
 WINDOW *no_matching_device_warning() {
-    log_log("No devices could be found that match the data in the state file.  Attach one now...");
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_DEVICE_NOT_ATTACHED);
     return message_window(stdscr, "No devices found",
                           "No devices could be found that match the data in "
                           "the state file.  If you haven't plugged the device "
@@ -2625,14 +2581,12 @@ void wait_for_device_connect_error(WINDOW *window) {
         erase_and_delete_window(window);
     }
 
-    log_log("An error occurred while waiting for the device to be reconnected.");
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_WAIT_FOR_DEVICE_RECONNECT_ERROR);
     message_window(stdscr, ERROR_TITLE, "An error occurred while waiting for you to reconnect the device.", 1);
 }
 
 void fstat_error(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling fstat() on %s: %s\n", program_options.device_name, strerror(errnum));
-    log_log(msg_buffer);
-    log_log("Unable to test -- unable to pull stats on the device.");
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OBTAIN_DEVICE_INFO);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We won't be able to test %s because we weren't able to pull stats"
@@ -2643,9 +2597,7 @@ void fstat_error(int errnum) {
 }
 
 void stat_error(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while calling stat() on %s: %s\n", program_options.device_name, strerror(errnum));
-    log_log(msg_buffer);
-    log_log("Unable to test -- unable to pull stats on the device.");
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OBTAIN_DEVICE_INFO);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We won't be able to test this device because we were unable to "
@@ -2657,16 +2609,12 @@ void stat_error(int errnum) {
 }
 
 void not_a_block_device_error() {
-    snprintf(msg_buffer, sizeof(msg_buffer), "Unable to test -- %s is not a block device", program_options.device_name);
-    log_log(msg_buffer);
-
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_NOT_A_BLOCK_DEVICE, program_options.device_name);
     message_window(stdscr, ERROR_TITLE, "We won't be able to test this device because it isn't a block device.  You must provide a block device to test with.", 1);
 }
 
 void device_open_error(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "Failed to open %s: %s", program_options.device_name, strerror(errnum));
-    log_log(msg_buffer);
-    log_log("Unable to test -- couldn't open device.  Make sure you run this program as sudo.");
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OPEN_DEVICE);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We won't be able to test this device because we couldn't open "
@@ -2678,8 +2626,7 @@ void device_open_error(int errnum) {
 }
 
 void ioctl_error(int errnum) {
-    snprintf(msg_buffer, sizeof(msg_buffer), "Got the following error while trying to call ioctl() on %s: %s", program_options.device_name, strerror(errnum));
-    log_log(msg_buffer);
+    log_log(NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OBTAIN_DEVICE_INFO);
 
     snprintf(msg_buffer, sizeof(msg_buffer),
              "We won't be able to test this device because we couldn't pull "
@@ -2689,7 +2636,7 @@ void ioctl_error(int errnum) {
 }
 
 void save_state_error() {
-    log_log("Error creating save state, disabling save stating");
+    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_SAVE_STATE_ERROR);
     message_window(stdscr, WARNING_TITLE, "An error occurred while trying to save the program state.  Save stating has been disabled.", 1);
 
     free(program_options.state_file);
@@ -2857,8 +2804,7 @@ int endurance_test_write_block(int *fd, uint64_t starting_sector, int num_sector
                 } else {
                     // Mark this sector bad and skip over it
                     if(!is_sector_bad(current_sector)) {
-                        snprintf(msg_buffer, sizeof(msg_buffer), "endurance_test_write_block(): Write error on sector %lu; marking sector unusable", current_sector);
-                        log_log(msg_buffer);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR_SECTOR_UNUSABLE, current_sector);
                         num_bad_sectors++;
                     }
 
@@ -2974,6 +2920,7 @@ int endurance_test_write_slice(int *fd, uint64_t round_num, unsigned int rng_see
     char *write_buffer;
 
     if(ret = posix_memalign((void **) &write_buffer, sysconf(_SC_PAGESIZE), device_stats.block_size)) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(ret));
         posix_memalign_error(ret);
         return -1;
     }
@@ -3026,7 +2973,7 @@ int endurance_test_write_slice(int *fd, uint64_t round_num, unsigned int rng_see
 
             if(device_was_disconnected) {
                 // Unmark the sectors we've written in this slice so far
-                log_log("Device disconnect was detected during this slice -- restarting slice");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_RESTARTING_SLICE);
                 reset_sector_map_partial(get_slice_start(slice_num), last_sector);
                 redraw_sector_map();
             } else {
@@ -3088,7 +3035,7 @@ int main(int argc, char **argv) {
     is_writing = -1;
 
     void cleanup() {
-        log_log("Program ending.");
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_PROGRAM_ENDING);
         if(fd != -1) {
             close(fd);
         }
@@ -3191,14 +3138,14 @@ int main(int argc, char **argv) {
     // If stdout isn't a tty (e.g., if output is being redirected to a file),
     // then we should turn off the ncurses routines.
     if(!program_options.no_curses && !isatty(1)) {
-        log_log("stdout isn't a tty -- turning off curses mode");
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_NCURSES_STDOUT_NOT_A_TTY);
         program_options.no_curses = 1;
     }
 
     // Initialize ncurses
     if(!program_options.no_curses) {
         if(screen_setup()) {
-            log_log("Terminal is too small -- turning off curses mode");
+            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_NCURSES_TERMINAL_TOO_SMALL);
             program_options.no_curses = 1;
         } else {
             redraw_screen();
@@ -3225,12 +3172,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    // dispatch_null_param_event(EVENT_PROGRAM_STARTED, 0);
-    log_log("Program version " VERSION " started.");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_PROGRAM_STARTING, VERSION);
 
     if(state_file_status == LOAD_STATE_SUCCESS) {
-        snprintf(msg_buffer, sizeof(msg_buffer), "Resuming from state file %s", program_options.state_file);
-        log_log(msg_buffer);
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_RESUMING_FROM_STATE_FILE, program_options.state_file);
     }
 
     if(iret = open_lockfile(program_options.lock_file)) {
@@ -3248,8 +3193,7 @@ int main(int argc, char **argv) {
             return -1;
         }
 
-        snprintf(msg_buffer, sizeof(msg_buffer), "Logging stats to %s", program_options.stats_file);
-        log_log(msg_buffer);
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_LOGGING_STATS_TO_FILE, program_options.stats_file);
 
         // Write the CSV headers out to the file
         fprintf(file_handles.stats_file,
@@ -3265,7 +3209,7 @@ int main(int argc, char **argv) {
     }
 
     if(state_file_status == LOAD_STATE_SUCCESS && !forced_device) {
-        log_log("Attempting to locate device described in state file");
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_FINDING_DEVICE_FROM_STATE_FILE);
         window = message_window(stdscr, NULL, "Finding device described in state file...", 0);
 
         iret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
@@ -3307,6 +3251,7 @@ int main(int argc, char **argv) {
         }
 
         if(fstat(fd, &fs)) {
+            log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_FSTAT_ERROR, strerror(errno));
             fstat_error(errno);
             cleanup();
             return -1;
@@ -3314,9 +3259,9 @@ int main(int argc, char **argv) {
     } else {
         if(forced_device) {
             if(state_file_status != LOAD_STATE_SUCCESS) {
-                log_log("Not resuming from a state file -- ignoring --force-device parameter");
+                log_log(NULL, SEVERITY_LEVEL_INFO, MSG_IGNORING_FORCED_DEVICE);
             } else {
-                log_log("--force_device specified on command line, resuming from specified device");
+                log_log(NULL, SEVERITY_LEVEL_INFO, MSG_USING_FORCED_DEVICE);
 
                 if(program_options.device_name) {
                     free(program_options.device_name);
@@ -3328,7 +3273,9 @@ int main(int argc, char **argv) {
         }
 
         if((ret = is_block_device(program_options.device_name)) == -1) {
-            stat_error(errno);
+            local_errno = errno;
+            log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_STAT_ERROR, strerror(local_errno));
+            stat_error(local_errno);
             cleanup();
             return -1;
         } else if(!ret) {
@@ -3339,6 +3286,7 @@ int main(int argc, char **argv) {
 
         if((fd = open(program_options.device_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
             local_errno = errno;
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_OPEN_ERROR, strerror(local_errno));
             device_open_error(local_errno);
             cleanup();
             return -1;
@@ -3348,6 +3296,7 @@ int main(int argc, char **argv) {
     if(ioctl(fd, BLKGETSIZE64, &device_stats.reported_size_bytes) || ioctl(fd, BLKSSZGET, &device_stats.sector_size) ||
         ioctl(fd, BLKSECTGET, &max_sectors_per_request) || ioctl(fd, BLKPBSZGET, &device_stats.physical_sector_size)) {
         local_errno = errno;
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_IOCTL_ERROR, strerror(local_errno));
         ioctl_error(local_errno);
         cleanup();
         return -1;
@@ -3362,19 +3311,14 @@ int main(int argc, char **argv) {
     device_stats.preferred_block_size = fs.st_blksize;
     device_stats.max_request_size = device_stats.sector_size * max_sectors_per_request;
 
-    log_log("Device info reported by kernel:");
-    snprintf(msg_buffer, sizeof(msg_buffer), "  Reported size            : %'lu bytes", device_stats.reported_size_bytes);
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "  Sector size (logical)    : %'u bytes", device_stats.sector_size);
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "  Sector size (physical)   : %'u bytes", device_stats.physical_sector_size);
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "  Total sectors (derived)  : %'lu", device_stats.num_sectors);
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "  Preferred block size     : %'lu bytes", fs.st_blksize);
-    log_log(msg_buffer);
-    snprintf(msg_buffer, sizeof(msg_buffer), "  Max sectors per request  : %'hu", max_sectors_per_request);
-    log_log(msg_buffer);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_HEADER);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_REPORTED_SIZE, device_stats.reported_size_bytes);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_LOGICAL_SECTOR_SIZE, device_stats.sector_size);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_PHYSICAL_SECTOR_SIZE, device_stats.physical_sector_size);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_TOTAL_SECTORS, device_stats.num_sectors);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_PREFERRED_BLOCK_SIZE, fs.st_blksize);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_INFO_MAX_SECTORS_PER_REQUEST, max_sectors_per_request);
+
     mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.reported_size_bytes);
     refresh();
 
@@ -3386,8 +3330,7 @@ int main(int argc, char **argv) {
 
             if((device_stats.block_size = probe_for_optimal_block_size(fd)) <= 0) {
                 device_stats.block_size = device_stats.sector_size * max_sectors_per_request;
-                snprintf(msg_buffer, sizeof(msg_buffer), "Unable to probe for optimal block size.  Falling back to derived block size (%'d bytes).", device_stats.block_size);
-                log_log(msg_buffer);
+                log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_UNABLE_TO_PROBE_FOR_OPTIMAL_BLOCK_SIZE, device_stats.block_size);
             }
         } else {
             device_stats.block_size = device_stats.sector_size * max_sectors_per_request;
@@ -3401,8 +3344,7 @@ int main(int argc, char **argv) {
             device_stats.num_sectors = program_options.force_sectors;
             device_stats.detected_size_bytes = program_options.force_sectors * device_stats.sector_size;
 
-            snprintf(msg_buffer, sizeof(msg_buffer), "Assuming that the device is %'lu bytes long (as specified on the command line).", device_stats.detected_size_bytes);
-            log_log(msg_buffer);
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_USING_FORCED_DEVICE_SIZE, device_stats.detected_size_bytes);
 
             if(device_stats.detected_size_bytes == device_stats.reported_size_bytes) {
                 device_stats.is_fake_flash = FAKE_FLASH_NO;
@@ -3425,8 +3367,7 @@ int main(int argc, char **argv) {
                 }
             }
         } else if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, device_stats.block_size))) {
-            snprintf(msg_buffer, sizeof(msg_buffer), "Assuming that the kernel-reported device size (%'lu bytes) is correct.", device_stats.reported_size_bytes);
-            log_log(msg_buffer);
+            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_USING_KERNEL_REPORTED_DEVICE_SIZE, device_stats.reported_size_bytes);
 
             middle_of_device = device_stats.reported_size_bytes / 2;
 
@@ -3496,12 +3437,14 @@ int main(int argc, char **argv) {
     // posix_memalign because the memory needs to be aligned on a page boundary
     // (since we're doing unbuffered reading/writing).
     if(ret = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), device_stats.block_size)) {
+        log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_POSIX_MEMALIGN_ERROR, strerror(ret));
         posix_memalign_error(ret);
         cleanup();
         return -1;
     }
 
     if(ret = posix_memalign((void **) &compare_buf, sysconf(_SC_PAGESIZE), device_stats.block_size)) {
+        log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_POSIX_MEMALIGN_ERROR, strerror(ret));
         posix_memalign_error(ret);
         cleanup();
         return -1;
@@ -3514,6 +3457,7 @@ int main(int argc, char **argv) {
     // doesn't match the expected values.
     zero_buf = (char *) malloc(device_stats.sector_size);
     if(!zero_buf) {
+        log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_MALLOC_ERROR, strerror(errno));
         malloc_error(errno);
         cleanup();
         return -1;
@@ -3523,6 +3467,7 @@ int main(int argc, char **argv) {
 
     ff_buf = (char *) malloc(device_stats.sector_size);
     if(!ff_buf) {
+        log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_MALLOC_ERROR, strerror(errno));
         malloc_error(errno);
         cleanup();
         return -1;
@@ -3532,6 +3477,7 @@ int main(int argc, char **argv) {
 
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         if(!(sector_display.sector_map = (char *) malloc(device_stats.num_sectors))) {
+            log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_MALLOC_ERROR, strerror(errno));
             malloc_error(errno);
             cleanup();
             return -1;
@@ -3546,12 +3492,11 @@ int main(int argc, char **argv) {
     if(!memcmp(zero_buf, device_stats.device_uuid, sizeof(uuid_t))) {
         uuid_generate(device_stats.device_uuid);
         if(state_file_status == LOAD_STATE_SUCCESS) {
-            log_log("No device UUID present in state file -- assigning a new UUID to the device");
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ASSIGNING_NEW_DEVICE_ID);
         }
 
         uuid_unparse(device_stats.device_uuid, device_uuid_str);
-        snprintf(msg_buffer, sizeof(msg_buffer), "Assigning UUID %s to device", device_uuid_str);
-        log_log(msg_buffer);
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ASSIGNING_DEVICE_ID_TO_DEVICE, device_uuid_str);
     }
 
     // Start filling up the device
@@ -3559,7 +3504,7 @@ int main(int argc, char **argv) {
     memset(&stress_test_stats, 0, sizeof(stress_test_stats));
 
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
-        log_log("Beginning stress test");
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_STARTING);
         num_rounds = state_data.bytes_written = state_data.bytes_read = 0;
     } else {
         // Count up the number of bad sectors and update device_stats.num_bad_sectors
@@ -3573,8 +3518,7 @@ int main(int argc, char **argv) {
         stress_test_stats.previous_bytes_read = state_data.bytes_read;
         stress_test_stats.previous_bad_sectors = device_stats.num_bad_sectors;
 
-        snprintf(msg_buffer, sizeof(msg_buffer), "Resuming stress test from round %'lu", num_rounds + 1);
-        log_log(msg_buffer);
+        log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_RESUMING, num_rounds + 1);
     }
 
     assert(!gettimeofday(&stress_test_stats.previous_update_time, NULL));
@@ -3594,8 +3538,7 @@ int main(int argc, char **argv) {
 
         if(iret = pthread_create(&sql_thread, NULL, &sql_thread_main, &sql_thread_params)) {
             sql_thread_status = SQL_THREAD_ERROR;
-            snprintf(msg_buffer, sizeof(msg_buffer), "Error creating SQL thread: %s", strerror(iret));
-            log_log(msg_buffer);
+            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_ERROR_CREATING_SQL_THREAD, strerror(iret));
         }
     }
 
@@ -3613,7 +3556,7 @@ int main(int argc, char **argv) {
 
         if(num_rounds > 0) {
             if(save_state()) {
-                log_log("Error creating save state, disabling save stating");
+                log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_SAVE_STATE_ERROR);
                 message_window(stdscr, WARNING_TITLE, "An error occurred while trying to save the program state.  Save stating has been disabled.", 1);
 
                 free(program_options.state_file);
@@ -3725,30 +3668,22 @@ int main(int argc, char **argv) {
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             if(!memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
                                 // The data in the sector is all zeroes
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (sector read as all 0x00's); marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(msg_buffer);
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_SECTOR_ALL_00S, cur_sector + (j / device_stats.sector_size));
                             } else if(!memcmp(compare_buf + j, ff_buf, device_stats.sector_size)) {
                                 // The data in the sector is all 0xff's
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (sector read as all 0xff's); marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(msg_buffer);
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_SECTOR_ALL_FFS, cur_sector + (j / device_stats.sector_size));
                             } else if(calculate_crc32c(0, compare_buf + j, device_stats.sector_size)) {
                                 // The CRC-32 embedded in the sector data doesn't match the calculated CRC-32
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (CRC32 mismatch; embedded value was 0x%08x, calculated value was 0x%08x), marking sector bad",
-                                         cur_sector + (j / device_stats.sector_size), get_embedded_crc32c(compare_buf + j, device_stats.sector_size),
-                                         calculate_crc32c(0, compare_buf + j, device_stats.sector_size - sizeof(uint32_t)));
-                                log_log(msg_buffer);
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_CRC32_MISMATCH, cur_sector + (j / device_stats.sector_size), get_embedded_crc32c(compare_buf + j, device_stats.sector_size),
+                                        calculate_crc32c(0, compare_buf + j, device_stats.sector_size - sizeof(uint32_t)));
                                 log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
                             } else if(decode_embedded_round_number(compare_buf + j) != num_rounds) {
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (write failure detected; data read back was from round %ld, sector %lu), marking sector bad",
-                                         cur_sector + (j / device_stats.sector_size), decode_embedded_round_number(compare_buf + j) + 1, decode_embedded_sector_number(compare_buf + j));
-                                log_log(msg_buffer);
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_WRITE_FAILURE, cur_sector + (j / device_stats.sector_size), decode_embedded_round_number(compare_buf + j) + 1,
+                                        decode_embedded_sector_number(compare_buf + j));
                             } else if(decode_embedded_sector_number(compare_buf + j) != (cur_sector + (j / device_stats.sector_size))) {
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu (address decoding error detected, data was originally from sector %lu), marking sector bad",
-                                         cur_sector + (j / device_stats.sector_size), decode_embedded_sector_number(compare_buf + j));
-                                log_log(msg_buffer);
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_ADDRESS_DECODING_FAILURE, cur_sector + (j / device_stats.sector_size), decode_embedded_sector_number(compare_buf + j));
                             } else {
-                                snprintf(msg_buffer, sizeof(msg_buffer), "Data verification failure in sector %lu; marking sector bad", cur_sector + (j / device_stats.sector_size));
-                                log_log(msg_buffer);
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_GENERIC, cur_sector + (j / device_stats.sector_size));
                                 log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
                             }
 
@@ -3776,41 +3711,14 @@ int main(int argc, char **argv) {
         read_order = NULL;
 
         if(!num_bad_sectors && !device_stats.num_bad_sectors) {
-            snprintf(msg_buffer, sizeof(msg_buffer), "Round %'lu complete, no bad sectors detected", num_rounds + 1);
-            log_log(msg_buffer);
-        } else /* if(!num_bad_sectors && device_stats.num_bad_sectors) */ {
-            snprintf(msg_buffer, sizeof(msg_buffer), "Round %'lu complete; round stats:", num_rounds + 1);
-            log_log(msg_buffer);
-
-            snprintf(msg_buffer, sizeof(msg_buffer), "  Sectors that failed verification this round: %'lu", num_bad_sectors_this_round);
-            log_log(msg_buffer);
-
-            snprintf(msg_buffer, sizeof(msg_buffer), "  New bad sectors this round: %'lu", num_bad_sectors);
-            log_log(msg_buffer);
-
-            snprintf(msg_buffer, sizeof(msg_buffer), "  Sectors marked bad in a previous round that passed verification this round: %'lu", num_good_sectors_this_round);
-            log_log(msg_buffer);
-
-            snprintf(msg_buffer, sizeof(msg_buffer), "  Total bad sectors: %'lu (%0.2f%% of total)", device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
-            log_log(msg_buffer);
-        } /* else {
-            snprintf(msg_buffer, sizeof(msg_buffer), "Round %'lu complete, %'lu new bad sectors found this round; %'lu bad sectors discovered total (%0.2f%% of total)",
-                num_rounds + 1, num_bad_sectors, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
-            log_log(msg_buffer);
-
-            if(state_data.first_failure_round == -1) {
-                state_data.first_failure_round = num_rounds;
-            }
-
-            if(((((double)device_stats.num_bad_sectors) / ((double)device_stats.num_sectors)) > 0.1) && (state_data.ten_percent_failure_round == -1)) {
-                state_data.ten_percent_failure_round = num_rounds;
-            }
-
-            if(((((double)device_stats.num_bad_sectors) / ((double)device_stats.num_sectors)) > 0.25) &&
-                (state_data.twenty_five_percent_failure_round == -1)) {
-                state_data.twenty_five_percent_failure_round = num_rounds;
-            }
-            } */
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUND_COMPLETE_NO_BAD_SECTORS, num_rounds + 1);
+        } else {
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUND_COMPLETE_WITH_BAD_SECTORS, num_rounds + 1);
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_BAD_SECTORS_THIS_ROUND, num_bad_sectors_this_round);
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_NEW_BAD_SECTORS_THIS_ROUND, num_bad_sectors);
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_PREVIOUSLY_BAD_SECTORS_NOW_GOOD, num_good_sectors_this_round);
+            log_log(NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_TOTAL_BAD_SECTORS, device_stats.num_bad_sectors, (((double) device_stats.num_bad_sectors) / ((double) device_stats.num_sectors)) * 100);
+        }
     }
 
     main_thread_status = MAIN_THREAD_STATUS_ENDING;

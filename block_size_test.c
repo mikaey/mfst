@@ -10,6 +10,7 @@
 
 #include "block_size_test.h"
 #include "lockfile.h"
+#include "messages.h"
 #include "mfst.h"
 #include "ncurses.h"
 #include "rng.h"
@@ -70,9 +71,7 @@ int probe_for_optimal_block_size(int fd) {
     // Get a lock on the lockfile.
     if(lock_lockfile()) {
         local_errno = errno;
-        snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): lockf() returned an error: %s", strerror(local_errno));
-        log_log(msg);
-        log_log("probe_for_optimal_block_size(): Skipping optimal write block size test.");
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_LOCKFILE_ERROR);
 
         snprintf(msg_buffer, sizeof(msg_buffer),
                  "Unable to obtain a lock on the lockfile.  For now, we'll "
@@ -90,16 +89,15 @@ int probe_for_optimal_block_size(int fd) {
     for(min = 0; (1 << (min + 9)) < device_stats.preferred_block_size && min <= 17; min++) {}
     for(max = 17; (1 << (max + 9)) > device_stats.max_request_size && max > (min + 1); max--) {}
 
-    log_log("probe_for_optimal_block_size(): Probing for optimal write block size...");
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_OPTIMAL_BLOCK_SIZE_TEST_STARTING);
     window = message_window(stdscr, "Probing for optimal write block size",
         "\n                                        ", // Make room for the progress bar
     0);
 
     if(local_errno = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), buf_size)) {
         unlock_lockfile();
-
-        snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): valloc() returned an error: %s", strerror(errno));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(local_errno));
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_MEM_ALLOC_ERROR);
 
         erase_and_delete_window(window);
         message_window(stdscr, WARNING_TITLE,
@@ -144,11 +142,12 @@ int probe_for_optimal_block_size(int fd) {
             while(cur_block_bytes_left) {
                 ret = write(fd, buf + total_bytes_written + (cur_block_size - cur_block_bytes_left), cur_block_bytes_left);
                 if(ret == -1) {
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR, strerror(errno));
+
                     free(buf);
                     unlock_lockfile();
 
-                    snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): write() returned an error: %s", strerror(errno));
-                    log_log(msg);
+                    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_DEVICE_ERROR);
 
                     erase_and_delete_window(window);
                     message_window(stdscr, WARNING_TITLE,
@@ -207,9 +206,8 @@ int probe_for_optimal_block_size(int fd) {
             unlock_lockfile();
             free(buf);
 
-            snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): lseek() returned an error: %s", strerror(local_errno));
-            log_log(msg);
-            log_log("probe_for_optimal_block_size(): Aborting test");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(local_errno));
+            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_DEVICE_ERROR);
 
             erase_and_delete_window(window);
 
@@ -228,8 +226,7 @@ int probe_for_optimal_block_size(int fd) {
         }
 
         rates[cur_pow] = buf_size / (((double) timediff(start_time, end_time)) / 1000000);
-        snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): %5s: %s", labels[cur_pow], format_rate(rates[cur_pow], rate_buffer, sizeof(rate_buffer)));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_OPTIMAL_BLOCK_SIZE_TEST_INDIVIDUAL_RESULT, labels[cur_pow], format_rate(rates[cur_pow], rate_buffer, sizeof(rate_buffer)));
 
         // After a certain point, the increase in speeds is trivial.
         // Therefore, we'll only accept higher speeds for bigger block sizes
@@ -245,9 +242,7 @@ int probe_for_optimal_block_size(int fd) {
     free(buf);
     erase_and_delete_window(window);
 
-    snprintf(msg, sizeof(msg), "probe_for_optimal_block_size(): Optimal write block size test complete; optimal write block size is %'d bytes",
-        1 << (highest_rate_pow + 9));
-    log_log(msg);
+    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_OPTIMAL_BLOCK_SIZE_TEST_COMPLETE, 1 << (highest_rate_pow + 9));
 
     return 1 << (highest_rate_pow + 9);
 }

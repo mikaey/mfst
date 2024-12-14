@@ -8,6 +8,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "messages.h"
 #include "mfst.h"
 #include "sql.h"
 
@@ -21,7 +22,6 @@ static struct timespec previous_time;
 int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     const char *update_query = "INSERT INTO consolidated_sector_maps (id, consolidated_sector_map, last_updated, cur_round_num, num_bad_sectors, status, rate) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE consolidated_sector_map=VALUES(consolidated_sector_map), last_updated=VALUES(last_updated), cur_round_num=VALUES(cur_round_num), num_bad_sectors=VALUES(num_bad_sectors), status=VALUES(status), rate=VALUES(rate)";
     char indicator;
-    char msg[256];
     time_t time_secs;
     double rate;
     double secs;
@@ -34,14 +34,14 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     uint64_t sectors_per_block = device_stats.num_sectors / CONSOLIDATED_SECTOR_MAP_SIZE;
     uint64_t result, i, j;
     int64_t current_round = num_rounds + 1;
+    int ret;
 
     // So we don't get in trouble with gcc
     main_thread_status_type tmp_main_thread_status = main_thread_status;
 
     // Put the consolidated sector map together
     if(!(consolidated_sector_map = malloc(sizeof(uint8_t) * consolidated_sector_map_size))) {
-        snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): malloc() failed: %m");
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
         return -1;
     }
     
@@ -62,14 +62,12 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     }
 
     if((time_secs = time(NULL)) == -1) {
-        snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): time() failed: %m");
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_TIME_ERROR, strerror(errno));
         return -1;
     }
 
     if(clock_gettime(CLOCK_MONOTONIC, &new_time) == -1) {
-        snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): clock_gettime() failed: %m");
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_CLOCK_GETTIME_ERROR, strerror(errno));
         return -1;
     }
 
@@ -120,8 +118,7 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     bind_params[6].buffer_length = sizeof(rate);
 
     if(!(stmt = mysql_stmt_init(mysql))) {
-        snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): mysql_stmt_init() failed: %s", mysql_error(mysql));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_INIT_ERROR, mysql_error(mysql));
         free(consolidated_sector_map);
         return -1;
     }
@@ -129,12 +126,12 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     if(result = mysql_stmt_prepare(stmt, update_query, strlen(update_query))) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_update_sector_map(): lost connection to server");
             free(consolidated_sector_map);
             return 1;
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
         } else {
-            snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): mysql_stmt_prepare() failed: %s", mysql_stmt_error(stmt));
-            log_log(msg);
+            sql_thread_status = SQL_THREAD_ERROR;
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_PREPARE_ERROR, mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             free(consolidated_sector_map);
             return -1;
@@ -142,8 +139,7 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     }
 
     if(mysql_stmt_bind_param(stmt, bind_params)) {
-        snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): mysql_stmt_bind_param() failed: %s", mysql_stmt_error(stmt));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_BIND_PARAM_ERROR, mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
         free(consolidated_sector_map);
         return -1;
@@ -154,14 +150,13 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     if(result = mysql_stmt_send_long_data(stmt, 1, consolidated_sector_map, consolidated_sector_map_size)) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_update_sector_map(): lost connection to server");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             mysql_stmt_close(stmt);
             free(consolidated_sector_map);
             return 1;
         } else {
             sql_thread_status = SQL_THREAD_ERROR;
-            snprintf(msg, sizeof(msg), "sql_thread_update_sector_map(): mysql_stmt_send_long_data() failed: %s", mysql_stmt_error(stmt));
-            log_log(msg);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_SEND_LONG_DATA_ERROR, mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             free(consolidated_sector_map);
             return -1;
@@ -171,13 +166,12 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
     if(result = mysql_stmt_execute(stmt)) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_update_sector_map(): lost connection to server");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             mysql_stmt_close(stmt);
             free(consolidated_sector_map);
             return 1;
         } else {
-            snprintf(msg, sizeof(msg), "sql_thread_main(): mysql_stmt_execute() failed: %s", mysql_stmt_error(stmt));
-            log_log(msg);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_EXECUTE_ERROR, mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             free(consolidated_sector_map);
             return -1;
@@ -198,25 +192,22 @@ int sql_thread_insert_card(MYSQL *mysql, char *name, uint64_t *id) {
     char indicator;
     char uuid_str[37];
     int result;
-    char msg[256];
 
     uuid_unparse(device_stats.device_uuid, uuid_str);
 
     if(!(stmt = mysql_stmt_init(mysql))) {
-        snprintf(msg, sizeof(msg), "sql_thread_insert_card(): mysql_stmt_init() failed: %s", mysql_stmt_error(stmt));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_INIT_ERROR, mysql_error(mysql));
         return -1;
     }
 
     if(result = mysql_stmt_prepare(stmt, insert_query, strlen(insert_query))) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_insert_card(): lost connection to server");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             mysql_stmt_close(stmt);
             return 1;
         } else {
-            snprintf(msg, sizeof(msg), "sql_thread_insert_card(): mysql_stmt_prepare() failed: %s", mysql_stmt_error(stmt));
-            log_log(msg);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_PREPARE_ERROR, mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             return -1;
         }
@@ -246,8 +237,7 @@ int sql_thread_insert_card(MYSQL *mysql, char *name, uint64_t *id) {
     bind_params[3].is_unsigned = 0;
 
     if(mysql_stmt_bind_param(stmt, bind_params)) {
-        snprintf(msg, sizeof(msg), "sql_thread_insert_card(): mysql_stmt_bind_param() failed: %s", mysql_stmt_error(stmt));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_BIND_PARAM_ERROR, mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
         return -1;
     }
@@ -257,12 +247,11 @@ int sql_thread_insert_card(MYSQL *mysql, char *name, uint64_t *id) {
     if(result = mysql_stmt_execute(stmt)) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_insert_card(): lost connection to server");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             mysql_stmt_close(stmt);
             return 1;
         } else {
-            snprintf(msg, sizeof(msg), "sql_thread_insert_card(): mysql_stmt_execute() failed: %s", mysql_stmt_error(stmt));
-            log_log(msg);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_EXECUTE_ERROR, mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             return -1;
         }
@@ -273,8 +262,7 @@ int sql_thread_insert_card(MYSQL *mysql, char *name, uint64_t *id) {
 
     sql_thread_status = SQL_THREAD_CONNECTED;
 
-    snprintf(msg, sizeof(msg), "sql_thread_insert_card(): Successfully registered new card with ID %lu", *id);
-    log_log(msg);
+    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_CARD_REGISTERED, *id);
 
     return 0;
 }
@@ -283,7 +271,6 @@ int sql_thread_find_card(MYSQL *mysql, uuid_t uuid, uint64_t *id) {
     MYSQL_STMT *stmt;
     MYSQL_BIND bind_params[2];
     char uuid_str[37];
-    char msg[256];
     char indicator;
     my_bool is_error, is_null;
     int result;
@@ -295,19 +282,19 @@ int sql_thread_find_card(MYSQL *mysql, uuid_t uuid, uint64_t *id) {
 
     if(!(stmt = mysql_stmt_init(mysql))) {
         sql_thread_status = SQL_THREAD_ERROR;
-        log_log("sql_thread_find_card(): mysql_stmt_init() failed");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_INIT_ERROR, mysql_error(mysql));
         return -1;
     }
 
     if(result = mysql_stmt_prepare(stmt, find_card_query, strlen(find_card_query))) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_find_card(): lost connection to server");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             mysql_stmt_close(stmt);
             return 1;
         } else {
             sql_thread_status = SQL_THREAD_ERROR;
-            log_log("sql_thread_find_card(): mysql_stmt_init() failed");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_PREPARE_ERROR, mysql_stmt_error(stmt));
             return -1;
         }
     }
@@ -329,15 +316,13 @@ int sql_thread_find_card(MYSQL *mysql, uuid_t uuid, uint64_t *id) {
     bind_params[1].is_unsigned = 1;
 
     if(mysql_stmt_bind_param(stmt, bind_params)) {
-        snprintf(msg, sizeof(msg), "sql_thread_find_card(): mysql_stmt_bind_param() failed: %s", mysql_stmt_error(stmt));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_BIND_PARAM_ERROR, mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
         return -1;
     }
 
     if(mysql_stmt_bind_result(stmt, bind_params + 1)) {
-        snprintf(msg, sizeof(msg), "sql_thread_find_card(): mysql_stmt_bind_result() failed: %s", mysql_stmt_error(stmt));
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_BIND_RESULT_ERROR, mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
         return -1;
     }
@@ -346,12 +331,11 @@ int sql_thread_find_card(MYSQL *mysql, uuid_t uuid, uint64_t *id) {
     if(result = mysql_stmt_execute(stmt)) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            log_log("sql_thread_find_card(): lost connection to server");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             mysql_stmt_close(stmt);
             return 1;
         } else {
-            snprintf(msg, sizeof(msg), "sql_thread_find_card(): mysql_stmt_execute() failed: %s", mysql_stmt_error(stmt));
-            log_log(msg);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_EXECUTE_ERROR, mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             return -1;
         }
@@ -463,19 +447,21 @@ void *sql_thread_main(void *arg) {
 
     if(!params->mysql_host || !params->mysql_username || !params->mysql_password || !params->mysql_port || !params->mysql_db_name) {
         sql_thread_status = SQL_THREAD_ERROR;
-        log_log("sql_thread_main(): A required parameter is missing");
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_SQL_THREAD_REQUIRED_PARAM_MISSING);
         return NULL;
     }
 
     if(!mysql_thread_safe()) {
         sql_thread_status = SQL_THREAD_ERROR;
-        log_log("sql_thread_main(): mysql_thread_safe() returned 0");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_THREAD_SAFE_RETURNED_0);
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_MARIADB_LIBRARIES_NOT_THREAD_SAFE);
         return NULL;
     }
 
     if(mysql_thread_init()) {
         sql_thread_status = SQL_THREAD_ERROR;
-        log_log("sql_thread_main(): mysql_thread_init() returned an error");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_THREAD_INIT_ERROR);
+        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_MARIADB_LIBRARY_ERROR);
         return NULL;
     }
 
@@ -485,7 +471,7 @@ void *sql_thread_main(void *arg) {
     while(1) {    
         if(!(mysql = mysql_init(NULL))) {
             sql_thread_status = SQL_THREAD_ERROR;
-            log_log("sql_thread_main(): mysql_init() failed");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_INIT_ERROR);
             return sql_thread_cleanup();
         }
 
@@ -493,7 +479,7 @@ void *sql_thread_main(void *arg) {
 
         if(!mysql_real_connect(mysql, params->mysql_host, params->mysql_username, params->mysql_password, params->mysql_db_name, params->mysql_port, NULL, 0)) {
             sql_thread_status = SQL_THREAD_ERROR;
-            log_log("sql_thread_main(): mysql_real_connect() failed, waiting 30 seconds before trying again");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_REAL_CONNECT_ERROR);
             mysql_close(mysql);
             sleep(30);
             continue;
@@ -504,12 +490,12 @@ void *sql_thread_main(void *arg) {
         // Were we given a card name?
         if(!card_registered) {
             if(params->card_id) {
-                snprintf(msg, sizeof(msg), "sql_thread_main(): Forcing use of card ID %lu", params->cardId);
-                log_log(msg);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FORCING_CARD_ID, params->card_id);
             } else {
                 if(result = sql_thread_find_card(mysql, device_stats.device_uuid, &params->card_id)) {
                     if(result == -1) {
                         sql_thread_status = SQL_THREAD_ERROR;
+                        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_FIND_CARD_ERROR);
                         return sql_thread_cleanup();
                     } else {
                         mysql_close(mysql);
@@ -521,8 +507,7 @@ void *sql_thread_main(void *arg) {
                 if(!params->card_id) {
                     if(!params->card_name) {
                         sql_thread_status = SQL_THREAD_ERROR;
-                        snprintf(msg, sizeof(msg), "sql_thread_main(): No card with UUID %s exists in the database and no card name provided", uuid_str);
-                        log_log(msg);
+                        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_CARD_NOT_REGISTERED_AND_NO_CARD_NAME_PROVIDED);
                         return sql_thread_cleanup();
                     }
 
@@ -530,6 +515,7 @@ void *sql_thread_main(void *arg) {
                     if(result = sql_thread_insert_card(mysql, params->card_name, &params->card_id)) {
                         if(result == -1) {
                             sql_thread_status = SQL_THREAD_ERROR;
+                            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_CARD_INSERT_ERROR);
                             return sql_thread_cleanup();
                         } else {
                             mysql_close(mysql);
@@ -541,6 +527,7 @@ void *sql_thread_main(void *arg) {
                     if(result = sql_thread_update_card(mysql, params->card_id)) {
                         if(result == -1) {
                             sql_thread_status = SQL_THREAD_ERROR;
+                            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_CARD_UPDATE_ERROR);
                             return sql_thread_cleanup();
                         } else {
                             mysql_close(mysql);
@@ -549,8 +536,7 @@ void *sql_thread_main(void *arg) {
                         }
                     }
 
-                    snprintf(msg, sizeof(msg), "sql_thread_main(): UUID %s already exists in database with ID %lu", uuid_str, params->card_id);
-                    log_log(msg);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_CARD_ALREADY_REGISTERED, uuid_str, params->card_id);
                 }
             }
 
@@ -561,6 +547,7 @@ void *sql_thread_main(void *arg) {
             if(result = sql_thread_update_sector_map(mysql, params->card_id)) {
                 if(result == -1) {
                     sql_thread_status = SQL_THREAD_ERROR;
+                    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_MAP_UPDATE_ERROR);
                     return sql_thread_cleanup();
                 } else {
                     mysql_close(mysql);

@@ -16,10 +16,8 @@
 
 #include "crc32.h"
 #include "device.h"
+#include "messages.h"
 #include "mfst.h"
-
-// A buffer for assembling messages
-static char message_buffer[256];
 
 int is_block_device(char *filename) {
     struct stat fs;
@@ -37,6 +35,9 @@ int did_device_disconnect(dev_t device_num) {
     struct stat sysstat;
     struct udev *udev_handle;
     struct udev_device *udev_dev;
+
+    // Sleep for a bit to give udev a chance to register the disconnect
+    usleep(250000);
 
     udev_handle = udev_new();
     if(!udev_handle) {
@@ -159,14 +160,13 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     uint64_t num_sectors_to_read;
 
     if(!(read_buffer = malloc(bod_mod_buffer_size))) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data: malloc() failed: %m");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
         return -1;
     }
 
     // Get the device's sector size.
     if(ioctl(fd, BLKSSZGET, &sector_size)) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): ioctl() failed while trying to get the device's sector size: %m");
-        log_log(message_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_IOCTL_ERROR, strerror(errno));
         free(read_buffer);
         return -1;
     }
@@ -175,7 +175,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
 
     // Make sure we're at the beginning of the device
     if(lseek(fd, 0, SEEK_SET) == -1) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Failed to seek to the beginning of the device: %m");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
         free(read_buffer);
         return -1;
     }
@@ -190,8 +190,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
                 memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size));
                 bytes_left_to_read -= ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size);
                 if(lseek(fd, bod_mod_buffer_size - bytes_left_to_read, SEEK_SET) == -1) {
-                    snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
-                    log_log(message_buffer);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
                     free(read_buffer);
                     return -1;
                 }
@@ -208,8 +207,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
 
             // Seek past the bad sectors
             if(lseek(fd, bod_mod_buffer_size - bytes_left_to_read, SEEK_SET) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
                 free(read_buffer);
                 return -1;
             }
@@ -217,7 +215,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     }
 
     if(!memcmp(read_buffer, bod_buffer, bod_mod_buffer_size)) {
-        log_log("compare_bod_mod_data(): Beginning-of-device data matches");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_DATA_BOD_MATCHES);
         free(read_buffer);
         return 0;
     } else {
@@ -234,8 +232,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     middle = device_size / 2;
 
     if(lseek(fd, middle, SEEK_SET) == -1) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
-        log_log(message_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
         free(read_buffer);
         return -1;
     }
@@ -248,8 +245,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
                 memset(read_buffer + (bod_mod_buffer_size - bytes_left_to_read), 0, ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size));
                 bytes_left_to_read -= ((bytes_left_to_read % device_stats.sector_size) == 0) ? device_stats.sector_size : (bytes_left_to_read % device_stats.sector_size);
                 if(lseek(fd, middle + (bod_mod_buffer_size - bytes_left_to_read), SEEK_SET) == -1) {
-                    snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
-                    log_log(message_buffer);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
                     free(read_buffer);
                     return -1;
                 }
@@ -266,8 +262,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
 
             // Seek past the bad sectors
             if(lseek(fd, middle + (bod_mod_buffer_size - bytes_left_to_read), SEEK_SET) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Got an error while trying to lseek() on the device: %m");
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
                 free(read_buffer);
                 return -1;
             }
@@ -275,7 +270,7 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
     }
 
     if(!memcmp(read_buffer, mod_buffer, bod_mod_buffer_size)) {
-        log_log("compare_bod_mod_data(): Middle-of-device data matches");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_DATA_MOD_MATCHES);
         free(read_buffer);
         return 0;
     } else {
@@ -290,18 +285,17 @@ int compare_bod_mod_data(int fd, size_t device_size, char *bod_buffer, char *mod
         }
 
         if(matching_sectors >= partial_match_threshold) {
-            log_log("compare_bod_mod_data(): At least 50% of total sectors match");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_DATA_PARTIAL_MATCH);
             return 0;
         }
     }
 
     if(matching_sectors > 0) {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Device data doesn't match (only %lu sector%s matched)", matching_sectors, matching_sectors == 1 ? "" : "s");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_DATA_ONLY_X_SECTORS_MATCHED, matching_sectors, matching_sectors == 1 ? "" : "s");
     } else {
-        snprintf(message_buffer, sizeof(message_buffer), "compare_bod_mod_data(): Device data doesn't match (no sectors matched)");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_DATA_NO_SECTORS_MATCHED);
     }
 
-    log_log(message_buffer);
     return 1;
 }
 
@@ -335,7 +329,6 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
     char *buffer;
     uuid_t device_uuid;
     int ret;
-    char msg[256];
 
     // Get the device's sector size.
     if(ioctl(fd, BLKSSZGET, &sector_size)) {
@@ -355,13 +348,12 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
 
     // If there aren't enough good sectors to query, give up now
     if(num_sectors < (num_bad_sectors + num_sectors_to_check)) {
-        log_log("compare_device_uuids(): Not enough good sectors to check");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_NOT_ENOUGH_GOOD_SECTORS);
         return -1;
     }
 
     if(!(buffer = malloc(sector_size))) {
-        snprintf(msg, sizeof(msg), "compare_device_uuids(): malloc() failed: %m");
-        log_log(msg);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
         return -1;
     }
 
@@ -398,8 +390,7 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
     // Ok, we have a list of sectors to check -- let's go!
     for(i = 0; i < num_sectors_to_check && (num_matching_sectors + (num_sectors_to_check - i)) >= (num_sectors_to_check / 2); i++) {
         if((ret = lseek(fd, sectors_to_check[i] * sector_size, SEEK_SET)) == -1) {
-            snprintf(msg, sizeof(msg), "compare_device_uuids(): lseek() failed: %m");
-            log_log(msg);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errno));
             free(buffer);
             return -1;
         }
@@ -407,10 +398,10 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
         if((ret = read(fd, buffer, sector_size)) != sector_size) {
             if(ret == -1) {
                 // Just skip over this sector
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_READ_ERROR, strerror(errno));
                 continue;
             } else {
-                snprintf(msg, sizeof(msg), "compare_device_uuids(): read() returned %d bytes, expected %d bytes", ret, sector_size);
-                log_log(msg);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_SHORT_READ, ret, sector_size);
                 continue;
             }
         }
@@ -425,7 +416,7 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
             if(++num_matching_sectors >= (num_sectors_to_check / 2)) {
                 free(buffer);
 
-                log_log("compare_device_uuids(): At least half of sectors matched the given UUID");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_MATCHED);
                 return 0;
             }
         }
@@ -433,8 +424,11 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
 
     free(buffer);
 
-    snprintf(msg, sizeof(msg), "compare_device_uuids(): Less than half of sectors had the correct UUID embedded in them (%d sectors matched)", num_matching_sectors);
-    log_log(msg);
+    if(!num_matching_sectors) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_NO_SECTORS_MATCHED);
+    } else {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ONLY_X_SECTORS_MATCHED, num_matching_sectors, num_matching_sectors == 1 ? "" : "s");
+    }
 
     return 1;
 }
@@ -472,30 +466,29 @@ int find_device(char   * preferred_dev_name,
 
     if(must_match) {
         if(!preferred_dev_name) {
-            log_log("find_device(): must_match set to 1, but preferred_dev_name was set to NULL");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MUST_MATCH_WITHOUT_PREFERRED_DEV_NAME);
+
             errno = EINVAL;
             return -1;
         }
 
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_CHECKING_DEVICE, preferred_dev_name);
+
         // Let's just probe preferred_dev_name instead of bothering udev
         if((fd = open(preferred_dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: open() returned an error: %m", preferred_dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_OPEN_ERROR, strerror(errno));
             return 0;
         }
 
         if(ioctl(fd, BLKGETSIZE64, &reported_device_size)) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: an ioctl() call to get the size of the device returned an error: %m", preferred_dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_IOCTL_ERROR, strerror(errno));
 
             close(fd);
             return 0;
         }
 
         if(reported_device_size != expected_device_size) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: device size does not match (expected size = %'lu bytes, reported size = %'lu bytes)", preferred_dev_name,
-                     expected_device_size, reported_device_size);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_DEVICE_SIZE_MISMATCH, expected_device_size, reported_device_size);
 
             close(fd);
             return 0;
@@ -503,26 +496,22 @@ int find_device(char   * preferred_dev_name,
 
         if(ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size)) {
             if(ret == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: an error occurred while comparing beginning-of-device and middle-of-device data", preferred_dev_name);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_COMPARE_BOD_MOD_DATA_ERROR);
             } else {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: beginning-of-device and middle-of-device data don't match", preferred_dev_name);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_BOD_MOD_DATA_MISMATCH);
             }
-
-            log_log(message_buffer);
 
             // Try to match by the device UUID
             if(expected_device_uuid) {
                 if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
                     if(ret == -1) {
-                        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: an error occurred while searching for embedded UUIDs", preferred_dev_name);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, preferred_dev_name);
                     } else {
-                        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: embedded UUIDs don't match", preferred_dev_name);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_UUIDS_MISMATCH, preferred_dev_name);
                     }
                 } else {
-                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing embedded UUIDs", preferred_dev_name);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MATCHED_DEVICE_BY_COMPARING_DEVICE_UUIDS, preferred_dev_name);
                 }
-
-                log_log(message_buffer);
             }
 
             close(fd);
@@ -532,22 +521,18 @@ int find_device(char   * preferred_dev_name,
             }
         } else {
             close(fd);
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing beginning-of-device and middle-of-device data", preferred_dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_BOD_MOD_DATA_MATCH, preferred_dev_name);
         }
 
         // Add the device to our list of devices
         if(!(matched_devices = malloc(++num_matches * sizeof(char *)))) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): malloc() failed: %m");
-            log_log(message_buffer);
-
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
             errno = ENOMEM;
             return -1;
         }
 
         if(!(matched_devices[0] = strdup(preferred_dev_name))) {
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): strdup() failed: %m");
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
 
             free(matched_devices);
 
@@ -558,7 +543,7 @@ int find_device(char   * preferred_dev_name,
         // Scan through the available block devices
         udev_handle = udev_new();
         if(!udev_handle) {
-            log_log("find_device(): udev_new() failed");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_NEW_ERROR);
 
             free_matched_devices();
 
@@ -567,9 +552,9 @@ int find_device(char   * preferred_dev_name,
         }
 
         if(!(udev_enum = udev_enumerate_new(udev_handle))) {
-            log_log("find_device(): udev_enumerate_new() failed");
-            udev_unref(udev_handle);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_ENUMERATE_NEW_ERROR);
 
+            udev_unref(udev_handle);
             free_matched_devices();
 
             errno = ELIBACC;
@@ -577,7 +562,8 @@ int find_device(char   * preferred_dev_name,
         }
 
         if(udev_enumerate_add_match_subsystem(udev_enum, "block") < 0) {
-            log_log("find_device(): udev_enumerate_add_match_subsystem() failed");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_ENUMERATE_ADD_MATCH_SUBSYSTEM_ERROR);
+
             udev_enumerate_unref(udev_enum);
             udev_unref(udev_handle);
             free_matched_devices();
@@ -587,10 +573,10 @@ int find_device(char   * preferred_dev_name,
         }
 
         if(udev_enumerate_scan_devices(udev_enum) < 0) {
-            log_log("find_devices(): udev_enumerate_scan_devices() failed");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_ENUMERATE_SCAN_DEVICES_ERROR);
+
             udev_enumerate_unref(udev_enum);
             udev_unref(udev_handle);
-
             free_matched_devices();
 
             errno = ELIBACC;
@@ -600,10 +586,10 @@ int find_device(char   * preferred_dev_name,
         if(!(list_entry = udev_enumerate_get_list_entry(udev_enum))) {
             // This scenario has to be an error.  What system wouldn't have any
             // block devices??
-            log_log("find_devices(): udev_enumerate_get_list_entry() failed");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_ENUMERATE_GET_LIST_ENTRY_ERROR);
+
             udev_enumerate_unref(udev_enum);
             udev_unref(udev_handle);
-
             free_matched_devices();
 
             errno = ELIBACC;
@@ -628,13 +614,11 @@ int find_device(char   * preferred_dev_name,
                 continue;
             }
 
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Looking at device %s", dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_LOOKING_AT_DEVICE, dev_name);
 
             reported_device_size = strtoull(dev_size_str, NULL, 10) * 512;
             if(reported_device_size != expected_device_size) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: device size doesn't match", dev_name);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_DEVICE_SIZE_MISMATCH, dev_name, expected_device_size, reported_device_size);
 
                 udev_device_unref(device);
                 list_entry = udev_list_entry_get_next(list_entry);
@@ -642,8 +626,7 @@ int find_device(char   * preferred_dev_name,
             }
 
             if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Rejecting device %s: open() returned an error: %m", dev_name);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_OPEN_ERROR, dev_name, strerror(errno));
 
                 udev_device_unref(device);
                 list_entry = udev_list_entry_get_next(list_entry);
@@ -652,26 +635,23 @@ int find_device(char   * preferred_dev_name,
 
             if(ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size)) {
                 if(ret == -1) {
-                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_ERROR, dev_name);
                 } else {
-                    snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: beginning-of-device and middle-of-device data don't match", dev_name);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_BOD_MOD_MISMATCH, dev_name);
                 }
-
-                log_log(message_buffer);
 
                 if(expected_device_uuid) {
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARING_DEVICE_UUIDS);
                     if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
                         if(ret == -1) {
-                            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: an error occurred while searching for embedded UUIDs", dev_name);
+                            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, dev_name);
                         } else {
-                            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Device %s: embedded UUIDs don't match", dev_name);
+                            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_UUIDS_MISMATCH, dev_name);
                         }
                     } else {
-                        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing embedded UUIDs", dev_name);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MATCHED_DEVICE_BY_COMPARING_DEVICE_UUIDS, dev_name);
                     }
                 }
-
-                log_log(message_buffer);
 
                 close(fd);
 
@@ -682,22 +662,18 @@ int find_device(char   * preferred_dev_name,
                 }
             } else {
                 close(fd);
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s by comparing beginning-of-device and middle-of-device data", dev_name);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_BOD_MOD_DATA_MATCH, dev_name);
             }
 
-            snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on device %s", dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_DEVICE_MATCHED, dev_name);
 
             // Add the device to our list of devices
             if(!(new_matched_devices = realloc(matched_devices, ++num_matches * sizeof(char *)))) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_device(): realloc() failed: %m");
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REALLOC_ERROR, strerror(errno));
 
                 udev_device_unref(device);
                 udev_enumerate_unref(udev_enum);
                 udev_unref(udev_handle);
-
                 free_matched_devices();
 
                 errno = ENOMEM;
@@ -707,8 +683,7 @@ int find_device(char   * preferred_dev_name,
             matched_devices = new_matched_devices;
 
             if(!(matched_devices[num_matches - 1] = strdup(dev_name))) {
-                snprintf(message_buffer, sizeof(message_buffer), "find_devices(): strdup() failed: %m");
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
 
                 udev_device_unref(device);
                 udev_enumerate_unref(udev_enum);
@@ -729,7 +704,7 @@ int find_device(char   * preferred_dev_name,
     }
 
     if(!num_matches) {
-        log_log("find_device(): No matching devices found");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_NO_MATCHING_DEVICES_FOUND);
         return 0;
     } else if(num_matches > 1) {
         // We found more than one match.  Was a preferred_dev_name provided?
@@ -749,9 +724,9 @@ int find_device(char   * preferred_dev_name,
             free_matched_devices();
 
             if(preferred_dev_name) {
-                log_log("find_device(): Found multiple matching devices, and preferred_dev_name did not match any of the devices found");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_AMBIGUOUS_PREFERRED_DEV);
             } else {
-                log_log("find_device(): Found multiple matching devices, and preferred_dev_name was not set");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_AMBIGUOUS_RESULT_NO_PREFERRED_DEV);
             }
 
             return num_matches;
@@ -762,11 +737,7 @@ int find_device(char   * preferred_dev_name,
 
     // Ok, we have a single match.  Grab the device number for it.
     if(stat(matched_devices[match_index], &fs)) {
-        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s, but got an error while trying to stat() it: %m",
-            matched_devices[match_index]);
-        log_log(message_buffer);
-        log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
-
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_STAT_ERROR, matched_devices[match_index], strerror(errno));
 
         free_matched_devices();
 
@@ -777,10 +748,7 @@ int find_device(char   * preferred_dev_name,
     // Ok, we have a single match.  Re-open the device read/write.
     if((fd = open(matched_devices[match_index], O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
         // Well crap.
-        snprintf(message_buffer, sizeof(message_buffer), "find_device(): Got a match on %s, but got an error while trying to re-open() it: %m",
-            matched_devices[match_index]);
-        log_log(message_buffer);
-        log_log("find_device(): You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_OPEN_ERROR, matched_devices[match_index], strerror(errno));
 
         free_matched_devices();
 
@@ -832,16 +800,14 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
     monitor = udev_monitor_new_from_netlink(udev_handle, "udev");
     if(!monitor) {
-        snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): udev_monitor_new_from_nelink() returned NULL");
-        log_log(message_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_MONITOR_NEW_FROM_NETLINK_ERROR);
 
         udev_unref(udev_handle);
         return -1;
     }
 
     if(udev_monitor_filter_add_match_subsystem_devtype(monitor, "block", "disk") < 0) {
-        snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): udev_monitor_filter_add_match_subsystem_devtype() returned an error");
-        log_log(message_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_MONITOR_FILTER_ADD_MATCH_SUBSYSTEM_DEVTYPE_ERROR);
 
         udev_monitor_unref(monitor);
         udev_unref(udev_handle);
@@ -849,8 +815,7 @@ int wait_for_device_reconnect(size_t   expected_device_size,
     }
 
     if(udev_monitor_enable_receiving(monitor) < 0) {
-        snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): udev_monitor_enable_receiving() returned an error");
-        log_log(message_buffer);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_MONITOR_ENABLE_RECEIVING_ERROR);
 
         udev_monitor_unref(monitor);
         udev_unref(udev_handle);
@@ -866,15 +831,13 @@ int wait_for_device_reconnect(size_t   expected_device_size,
                 continue;
             }
 
-            snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Detected new device %s", dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DETECTED_NEW_DEVICE, dev_name);
 
             // Check the size of the device.
             dev_size_str = udev_device_get_sysattr_value(device, "size");
             if(!dev_size_str) {
                 // Nope, let's move on.
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Rejecting device %s: can't get size of device", dev_name);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_CANT_GET_SIZE_OF_DEVICE, dev_name);
 
                 udev_device_unref(device);
                 continue;
@@ -883,18 +846,14 @@ int wait_for_device_reconnect(size_t   expected_device_size,
             reported_device_size = strtoull(dev_size_str, NULL, 10) * 512;
             if(reported_device_size != expected_device_size) {
                 // Device's reported size doesn't match
-                snprintf(message_buffer, sizeof(message_buffer),
-                         "wait_for_device_reconnect(): Rejecting device %s: device size doesn't match (this device = %'lu bytes, device we're looking for = %'lu bytes)",
-                         dev_name, reported_device_size, expected_device_size);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_DEVICE_SIZE_MISMATCH, dev_name, expected_device_size, reported_device_size);
 
                 udev_device_unref(device);
                 continue;
             }
 
             if((fd = open(dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Rejecting device %s: open() returned an error: %m", dev_name);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_OPEN_ERROR, dev_name, strerror(errno));
 
                 udev_device_unref(device);
                 continue;
@@ -904,24 +863,21 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
             if(ret) {
                 if(ret == -1) {
-                    snprintf(message_buffer, sizeof(message_buffer),
-                             "wait_for_device_reconnect(): Device %s: an error occurred while comparing beginning-of-device and middle-of-device data", dev_name);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_ERROR, dev_name);
                 } else {
-                    snprintf(message_buffer, sizeof(message_buffer),
-                             "wait_for_device_reconnect(): Device %s: beginning-of-device and middle-of-device data doesn't match", dev_name);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_BOD_MOD_MISMATCH, dev_name);
                 }
 
-                log_log(message_buffer);
-
                 if(expected_device_uuid) {
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARING_DEVICE_UUIDS);
                     if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
                         if(ret == -1) {
-                            snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Device %s: an error occurred while searching for embedded UUIDs", dev_name);
+                            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, dev_name);
                         } else {
-                            snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Device %s: embedded UUIDs don't match", dev_name);
+                            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_UUIDS_MISMATCH, dev_name);
                         }
                     } else {
-                        snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s by comparing embedded UUIDs", dev_name);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MATCHED_DEVICE_BY_COMPARING_DEVICE_UUIDS, dev_name);
                     }
                 }
 
@@ -937,9 +893,7 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
             // Ok, we have a match.  Get stats on the device.
             if(stat(dev_name, &fs) == -1) {
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to stat() it: %m", dev_name);
-                log_log(message_buffer);
-                log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_STAT_ERROR, dev_name, strerror(errno));
 
                 udev_device_unref(device);
                 continue;
@@ -948,22 +902,17 @@ int wait_for_device_reconnect(size_t   expected_device_size,
             // Re-open the device read/write.
             if((fd = open(dev_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
                 // Well crap.
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but got an error while trying to re-open() it: %m",
-                         dev_name);
-                log_log(message_buffer);
-                log_log("You can try unplugging/re-plugging it to see if maybe it'll work next time...");
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_OPEN_ERROR, dev_name, strerror(errno));
 
                 udev_device_unref(device);
                 continue;
             }
 
-            snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on device %s", dev_name);
-            log_log(message_buffer);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_DEVICE_MATCHED, dev_name);
 
             // Copy the device name over to device_name.
             if(!(new_dev_name = strdup(dev_name))) {
-                snprintf(message_buffer, sizeof(message_buffer), "wait_for_device_reconnect(): Got a match on %s, but a call to strdup() failed: %m", dev_name);
-                log_log(message_buffer);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
 
                 close(fd);
                 udev_device_unref(device);
@@ -1084,7 +1033,7 @@ int reset_device(int device_fd) {
     } else if(ret == 0) {
         if(wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, sector_display.sector_map,
                                      &new_device_name, &new_device_num, &fd)) {
-            log_log("reset_device(): Error while waiting for device to reconnect");
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WAIT_FOR_DEVICE_RECONNECT_ERROR);
             return -1;
         }
     } else if(ret > 1) {
