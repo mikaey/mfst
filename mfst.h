@@ -427,6 +427,7 @@ typedef struct _device_stats_type {
     uint64_t bytes_since_last_status_update;
     uint64_t reported_size_bytes;
     uint64_t detected_size_bytes;
+    uint64_t middle_of_device;
     int sector_size;
     unsigned int physical_sector_size;
     int preferred_block_size;

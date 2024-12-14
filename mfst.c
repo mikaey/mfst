@@ -2996,7 +2996,7 @@ int endurance_test_write_slice(int *fd, uint64_t round_num, unsigned int rng_see
 int main(int argc, char **argv) {
     int fd, cur_block_size, local_errno, restart_slice, state_file_status;
     struct stat fs;
-    uint64_t bytes_left_to_write, ret, cur_sector, middle_of_device, num_sectors_to_write;
+    uint64_t bytes_left_to_write, ret, cur_sector, num_sectors_to_write;
     unsigned int sectors_per_block;
     unsigned short max_sectors_per_request;
     char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
@@ -3352,7 +3352,7 @@ int main(int argc, char **argv) {
                 device_stats.is_fake_flash = FAKE_FLASH_YES;
             }
 
-            middle_of_device = device_stats.detected_size_bytes / 2;
+            device_stats.middle_of_device = device_stats.detected_size_bytes / 2;
 
             if(!program_options.no_curses) {
                 mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.detected_size_bytes);
@@ -3369,7 +3369,7 @@ int main(int argc, char **argv) {
         } else if(!(device_stats.detected_size_bytes = probe_device_size(fd, device_stats.num_sectors, device_stats.block_size))) {
             log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_USING_KERNEL_REPORTED_DEVICE_SIZE, device_stats.reported_size_bytes);
 
-            middle_of_device = device_stats.reported_size_bytes / 2;
+            device_stats.middle_of_device = device_stats.reported_size_bytes / 2;
 
             if(!program_options.no_curses) {
                 mvaddstr(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "Unknown");
@@ -3383,7 +3383,7 @@ int main(int argc, char **argv) {
                 device_stats.is_fake_flash = FAKE_FLASH_YES;
             }
 
-            middle_of_device = device_stats.detected_size_bytes / 2;
+            device_stats.middle_of_device = device_stats.detected_size_bytes / 2;
 
             if(!program_options.no_curses) {
                 mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%'lu bytes", device_stats.detected_size_bytes);
@@ -3407,7 +3407,7 @@ int main(int argc, char **argv) {
     } else {
         device_stats.is_fake_flash = (device_stats.reported_size_bytes == device_stats.detected_size_bytes) ? FAKE_FLASH_NO : FAKE_FLASH_YES;
         sectors_per_block = device_stats.block_size / device_stats.sector_size;
-        middle_of_device = device_stats.detected_size_bytes / 2;
+        device_stats.middle_of_device = device_stats.detected_size_bytes / 2;
         redraw_screen();
     }
 
