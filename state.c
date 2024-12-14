@@ -698,8 +698,6 @@ int load_state() {
                     return LOAD_STATE_LOAD_ERROR;
                 }
 
-                strcpy(buffers[i], json_object_get_string(obj));
-
                 if(base64_props[i]) {
                     // Base64-decode it and put that into buffers[i] instead
                     buffer = base64_decode(buffers[i], json_object_get_string_len(obj), &buffer_lens[i]);
