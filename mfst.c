@@ -3549,9 +3549,12 @@ int main(int argc, char **argv) {
     print_sql_status(sql_thread_status);
     prev_sql_thread_status = sql_thread_status;
 
-    for(num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++, num_bad_sectors = 0, num_bad_sectors_this_round = 0, num_good_sectors_this_round = 0) {
+    for(; device_stats.num_bad_sectors < (device_stats.num_sectors / 2); num_rounds++) {
         main_thread_status = MAIN_THREAD_STATUS_WRITING;
         draw_percentage(); // Just in case it hasn't been drawn recently
+        num_bad_sectors = 0;
+        num_bad_sectors_this_round = 0;
+        num_good_sectors_this_round = 0;
 
         if(prev_sql_thread_status != sql_thread_status) {
             prev_sql_thread_status = sql_thread_status;
