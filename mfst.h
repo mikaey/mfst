@@ -3,6 +3,7 @@
 
 #define VERSION "0.3"
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
+#include <inttypes.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <uuid/uuid.h>
