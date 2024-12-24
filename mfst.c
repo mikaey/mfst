@@ -3166,8 +3166,7 @@ int main(int argc, char **argv) {
     }
 
     if(program_options.log_file) {
-        file_handles.log_file = fopen(program_options.log_file, "a");
-        if(!file_handles.log_file) {
+        if(!(file_handles.log_file = fopen(program_options.log_file, "a"))) {
             log_file_open_error(errno);
             cleanup();
             return -1;
@@ -3187,9 +3186,7 @@ int main(int argc, char **argv) {
     }
 
     if(program_options.stats_file) {
-        file_handles.stats_file = fopen(program_options.stats_file, "a");
-        if(!file_handles.stats_file) {
-            local_errno = errno;
+        if(!(file_handles.stats_file = fopen(program_options.stats_file, "a"))) {
             stats_file_open_error(errno);
             cleanup();
             return -1;
