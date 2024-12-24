@@ -489,6 +489,9 @@ void *sql_thread_main(void *arg) {
             return sql_thread_cleanup();
         }
 
+        my_bool reconnect = 1;
+        mysql_optionsv(mysql, MYSQL_OPT_RECONNECT, (void *)&reconnect);
+
         sql_thread_status = SQL_THREAD_CONNECTING;
 
         if(!mysql_real_connect(mysql, params->mysql_host, params->mysql_username, params->mysql_password, params->mysql_db_name, params->mysql_port, NULL, 0)) {
