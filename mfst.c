@@ -3195,10 +3195,13 @@ int main(int argc, char **argv) {
 
         log_log(NULL, SEVERITY_LEVEL_INFO, MSG_LOGGING_STATS_TO_FILE, program_options.stats_file);
 
-        // Write the CSV headers out to the file
-        fprintf(file_handles.stats_file,
-            "Date/Time,Rounds Completed,Bytes Written,Total Bytes Written,Write Rate (bytes/sec),Bytes Read,Total Bytes Read,Read Rate (bytes/sec),Bad Sectors,Total Bad Sesctors,Bad Sector Rate (counts/min)\n");
-        fflush(file_handles.stats_file);
+        // Write the CSV headers out to the file, but only if we're not
+        // resuming from a state file
+        if(state_file_status != LOAD_STATE_SUCCESS) {
+            fprintf(file_handles.stats_file,
+                    "Date/Time,Rounds Completed,Bytes Written,Total Bytes Written,Write Rate (bytes/sec),Bytes Read,Total Bytes Read,Read Rate (bytes/sec),Bad Sectors,Total Bad Sesctors,Bad Sector Rate (counts/min)\n");
+            fflush(file_handles.stats_file);
+        }
     }
 
     // Does the system have a working gettimeofday?
