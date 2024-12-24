@@ -358,6 +358,12 @@
 void log_log(const char *funcname, int severity, int msg, ...);
 
 /**
+ * Redraws the entire screen.  Useful on initial setup or when the screen has
+ * been resized.
+ */
+void redraw_screen();
+
+/**
  * Returns the maximum number of contiguous writable sectors that can be written
  * starting from the given starting_sector, up to a max of max_sectors.
  * "Writable sectors" are those sectors that have not been previously marked bad
@@ -495,6 +501,9 @@ typedef enum {
 } main_thread_status_type;
 
 extern volatile main_thread_status_type main_thread_status;
+
+extern const char *WARNING_TITLE;
+extern const char *ERROR_TITLE;
 
 #endif // !defined(__MFST_H)
 
