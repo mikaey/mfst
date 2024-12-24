@@ -3004,7 +3004,7 @@ int main(int argc, char **argv) {
     char *buf, *compare_buf, *zero_buf, *ff_buf, *new_device_name;
     struct timeval speed_start_time;
     struct timeval rng_init_time;
-    uint64_t sectors_read, cur_sectors_per_block, last_sector;
+    uint64_t cur_sectors_per_block, last_sector;
     uint64_t num_good_sectors_this_round;
     uint64_t cur_slice, i, j;
     int *read_order;
@@ -3012,8 +3012,6 @@ int main(int argc, char **argv) {
     int reset_retry_count; // How many times have we tried to reset the device?
     int device_was_disconnected;
     int iret;
-    char tmp[16];
-    struct timeval stats_cur_time;
     WINDOW *window;
     dev_t new_device_num;
     pthread_t sql_thread;
@@ -3425,7 +3423,7 @@ int main(int argc, char **argv) {
     //      sector-by-sector basis.  If they match, then the sector is good.
     //  - Repeat until at least 50% of the sectors read result in mismatches.
     gettimeofday(&rng_init_time, NULL);
-    current_seed = initial_seed = rng_init_time.tv_sec + rng_init_time.tv_usec;
+    initial_seed = rng_init_time.tv_sec + rng_init_time.tv_usec;
     if(state_file_status == LOAD_STATE_FILE_NOT_SPECIFIED || state_file_status == LOAD_STATE_FILE_DOES_NOT_EXIST) {
         state_data.first_failure_round = state_data.ten_percent_failure_round = state_data.twenty_five_percent_failure_round = -1;
     }
@@ -3600,8 +3598,8 @@ int main(int argc, char **argv) {
         main_thread_status = MAIN_THREAD_STATUS_READING;
         read_order = random_list();
         device_stats.bytes_since_last_status_update = 0;
-        sectors_read = 0;
         is_writing = 0;
+
         if(!program_options.no_curses) {
             mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Reading ");
         }
