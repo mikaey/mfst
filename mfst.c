@@ -3468,6 +3468,7 @@ int main(int argc, char **argv) {
 
     memset(zero_buf, 0, device_stats.sector_size);
 
+    // Same thing as the zero buffer, but for all 0xff's
     ff_buf = (char *) malloc(device_stats.sector_size);
     if(!ff_buf) {
         log_log(__func__, SEVERITY_LEVEL_ERROR, MSG_MALLOC_ERROR, strerror(errno));
