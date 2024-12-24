@@ -3012,11 +3012,14 @@ int main(int argc, char **argv) {
     int reset_retry_count; // How many times have we tried to reset the device?
     int device_was_disconnected;
     int iret;
+    char device_uuid_str[37];
+    uuid_t device_uuid_from_device;
     WINDOW *window;
     dev_t new_device_num;
     pthread_t sql_thread;
     sql_thread_params_type sql_thread_params;
     sql_thread_status_type prev_sql_thread_status = 0;
+    int num_uuid_mismatches, device_mangling_detected;
 
     // Set things up so that cleanup() works properly
     sector_display.sector_map = NULL;
@@ -3646,23 +3649,60 @@ int main(int argc, char **argv) {
                     embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
                 }
 
-                if(endurance_test_read_block(&fd, cur_sector, cur_sectors_per_block, compare_buf, &device_was_disconnected)) {
-                    main_thread_status = MAIN_THREAD_STATUS_ENDING;
-                    print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
-                                         ABORT_REASON_READ_ERROR);
+                num_uuid_mismatches = 0;
+                do {
+                    device_mangling_detected = 0;
 
-                    cleanup();
-                    return 0;
-                }
+                    if(endurance_test_read_block(&fd, cur_sector, cur_sectors_per_block, compare_buf, &device_was_disconnected)) {
+                        main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                        print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds,
+                                             ABORT_REASON_READ_ERROR);
+
+                        cleanup();
+                        return 0;
+                    }
+
+                    // Do a first pass to see if there was any device mangling
+                    for(j = 0; j < cur_block_size; j += device_stats.sector_size) {
+                        if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
+                            if(!calculate_crc32c(0, compare_buf + j, device_stats.sector_size)) {
+                                get_embedded_device_uuid(compare_buf + j, device_uuid_from_device);
+                                if(memcmp(device_stats.device_uuid, device_uuid_from_device, sizeof(uuid_t))) {
+                                    device_mangling_detected = 1;
+                                    num_uuid_mismatches++;
+
+                                    uuid_unparse(device_uuid_from_device, device_uuid_str);
+
+                                    if(num_uuid_mismatches < 5) {
+                                        // Seek back to the beginning of the block
+                                        if(lseek_or_retry(&fd, cur_sector * device_stats.sector_size, &device_was_disconnected) == -1) {
+                                            main_thread_status = MAIN_THREAD_STATUS_ENDING;
+                                            print_device_summary(device_stats.num_bad_sectors < (device_stats.num_sectors / 2) ? -1 : num_rounds, num_rounds, ABORT_REASON_WRITE_ERROR);
+                                            cleanup();
+                                            return 0;
+                                        }
+
+                                        log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_MANGLING_DETECTED, cur_sector + (j / device_stats.sector_size), device_uuid_str);
+                                    }
+
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } while(device_mangling_detected && num_uuid_mismatches < 5);
 
                 mark_sectors_read(cur_sector, cur_sector + cur_sectors_per_block);
                 state_data.bytes_read += cur_block_size;
 
                 // Compare
+                num_uuid_mismatches = 0;
                 for(j = 0; j < cur_block_size; j += device_stats.sector_size) {
                     handle_key_inputs(NULL);
                     if(memcmp(buf + j, compare_buf + j, device_stats.sector_size)) {
                         if(!is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
+                            get_embedded_device_uuid(compare_buf + j, device_uuid_from_device);
+
                             if(!memcmp(compare_buf + j, zero_buf, device_stats.sector_size)) {
                                 // The data in the sector is all zeroes
                                 log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_SECTOR_ALL_00S, cur_sector + (j / device_stats.sector_size));
@@ -3674,6 +3714,10 @@ int main(int argc, char **argv) {
                                 log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_CRC32_MISMATCH, cur_sector + (j / device_stats.sector_size), get_embedded_crc32c(compare_buf + j, device_stats.sector_size),
                                         calculate_crc32c(0, compare_buf + j, device_stats.sector_size - sizeof(uint32_t)));
                                 log_sector_contents(cur_sector + (j / device_stats.sector_size), device_stats.sector_size, buf + j, compare_buf + j);
+                            } else if(memcmp(device_stats.device_uuid, device_uuid_from_device, sizeof(uuid_t))) {
+                                // The UUID embedded in the sector data doesn't match this device's UUID
+                                // If we made it to this point, we've already tried to re-read the data and failed
+                                log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_DEVICE_MANGLING, cur_sector + (j / device_stats.sector_size), device_uuid_str);
                             } else if(decode_embedded_round_number(compare_buf + j) != num_rounds) {
                                 log_log(NULL, SEVERITY_LEVEL_DEBUG, MSG_DATA_MISMATCH_WRITE_FAILURE, cur_sector + (j / device_stats.sector_size), decode_embedded_round_number(compare_buf + j) + 1,
                                         decode_embedded_sector_number(compare_buf + j));
