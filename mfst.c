@@ -3735,6 +3735,8 @@ int main(int argc, char **argv) {
                         }
 
                         mark_sector_bad(cur_sector + (j / device_stats.sector_size));
+                        num_bad_sectors_this_round++;
+
                     } else {
                         if(is_sector_bad(cur_sector + (j / device_stats.sector_size))) {
                             num_good_sectors_this_round++;
