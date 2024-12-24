@@ -1,13 +1,13 @@
 #if !defined(__MFST_H)
 #define __MFST_H
 
-#define VERSION "0.3"
-#define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
 #include <inttypes.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <uuid/uuid.h>
 
+#define VERSION "0.4"
+#define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
 
 // Size of the beginning-of-device and middle-of-device buffers
 #define BOD_MOD_BUFFER_SIZE 1048576
