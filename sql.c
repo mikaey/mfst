@@ -127,16 +127,17 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
         result = mysql_stmt_errno(stmt);
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
-            free(consolidated_sector_map);
-            return 1;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
+            ret = 1;
         } else {
             sql_thread_status = SQL_THREAD_ERROR;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_PREPARE_ERROR, mysql_stmt_error(stmt));
-            mysql_stmt_close(stmt);
-            free(consolidated_sector_map);
-            return -1;
+            ret = -1;
         }
+
+        mysql_stmt_close(stmt);
+        free(consolidated_sector_map);
+        return ret;
     }
 
     if(mysql_stmt_bind_param(stmt, bind_params)) {
@@ -153,16 +154,16 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
-            mysql_stmt_close(stmt);
-            free(consolidated_sector_map);
-            return 1;
+            ret = 1;
         } else {
             sql_thread_status = SQL_THREAD_ERROR;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_SEND_LONG_DATA_ERROR, mysql_stmt_error(stmt));
-            mysql_stmt_close(stmt);
-            free(consolidated_sector_map);
-            return -1;
+            ret = -1;
         }
+
+        mysql_stmt_close(stmt);
+        free(consolidated_sector_map);
+        return ret;
     }
 
     if(mysql_stmt_execute(stmt)) {
@@ -170,18 +171,16 @@ int sql_thread_update_sector_map(MYSQL *mysql, uint64_t card_id) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
-            mysql_stmt_close(stmt);
-            free(consolidated_sector_map);
-            return 1;
+            ret = 1;
         } else {
+            sql_thread_status = SQL_THREAD_ERROR;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_EXECUTE_ERROR, mysql_stmt_error(stmt));
-            mysql_stmt_close(stmt);
-            free(consolidated_sector_map);
-            return -1;
+            ret = -1;
         }
+    } else {
+        sql_thread_status = SQL_THREAD_CONNECTED;
+        ret = 0;
     }
-
-    sql_thread_status = SQL_THREAD_CONNECTED;
 
     mysql_stmt_close(stmt);
     free(consolidated_sector_map);
@@ -208,13 +207,14 @@ int sql_thread_insert_card(MYSQL *mysql, char *name, uint64_t *id) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
-            mysql_stmt_close(stmt);
-            return 1;
+            result = 1;
         } else {
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_PREPARE_ERROR, mysql_stmt_error(stmt));
-            mysql_stmt_close(stmt);
-            return -1;
+            result = -1;
         }
+
+        mysql_stmt_close(stmt);
+        return result;
     }
 
     memset(bind_params, 0, sizeof(bind_params));
@@ -253,13 +253,15 @@ int sql_thread_insert_card(MYSQL *mysql, char *name, uint64_t *id) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
-            mysql_stmt_close(stmt);
-            return 1;
+            result = 1;
         } else {
+            sql_thread_status = SQL_THREAD_ERROR;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_EXECUTE_ERROR, mysql_stmt_error(stmt));
-            mysql_stmt_close(stmt);
-            return -1;
+            result = -1;
         }
+
+        mysql_stmt_close(stmt);
+        return result;
     }
 
     *id = mysql_stmt_insert_id(stmt);
@@ -296,13 +298,15 @@ int sql_thread_find_card(MYSQL *mysql, uuid_t uuid, uint64_t *id) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
-            mysql_stmt_close(stmt);
-            return 1;
+            result = 1;
         } else {
             sql_thread_status = SQL_THREAD_ERROR;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_PREPARE_ERROR, mysql_stmt_error(stmt));
-            return -1;
+            result = -1;
         }
+
+        mysql_stmt_close(stmt);
+        return result;
     }
 
     memset(bind_params, 0, sizeof(bind_params));
@@ -339,13 +343,14 @@ int sql_thread_find_card(MYSQL *mysql, uuid_t uuid, uint64_t *id) {
         if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
-            mysql_stmt_close(stmt);
-            return 1;
+            result = 1;
         } else {
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_STMT_EXECUTE_ERROR, mysql_stmt_error(stmt));
-            mysql_stmt_close(stmt);
-            return -1;
+            result = -1;
         }
+
+        mysql_stmt_close(stmt);
+        return result;
     }
 
     result = mysql_stmt_fetch(stmt);
