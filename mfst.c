@@ -3646,11 +3646,7 @@ int main(int argc, char **argv) {
                 bytes_left_to_write = cur_block_size;
 
                 // Re-embed the sector number and CRC32 into the expected data
-                for(i = 0; i < cur_sectors_per_block; i++) {
-                    embed_sector_and_round_number(&(buf[i * device_stats.sector_size]), cur_sector + i, num_rounds);
-                    embed_device_uuid(&(buf[i * device_stats.sector_size]));
-                    embed_crc32c(&(buf[i * device_stats.sector_size]), device_stats.sector_size);
-                }
+                prepare_endurance_test_block(buf, cur_sectors_per_block, cur_sector, num_rounds);
 
                 num_uuid_mismatches = 0;
                 do {
