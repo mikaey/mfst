@@ -2310,13 +2310,11 @@ void get_embedded_device_uuid(char *data, char *uuid_buffer) {
     }
 }
 
-void embed_sector_and_round_number(char *data, uint64_t sector_number, int64_t round_num) {
-    // To make sure we don't write all zeros (or all ones) to the same bits
-    // every time, but still make sure the data is readable, we'll take some
-    // data from farther down the sector and xor it with our sector number/round
-    // number.  When read back, the data should be easily recoverable as long as
-    // the checksum is valid.
+void embed_sector_number(char *data, uint64_t sector_number) {
     *((uint64_t *) data) = sector_number ^ get_sector_number_xor_val(data);
+}
+
+void embed_round_number(char *data, int64_t round_num) {
     *((int64_t *) (data + 8)) = round_num ^ get_round_num_xor_val(data);
 }
 
