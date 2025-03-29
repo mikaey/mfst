@@ -433,18 +433,40 @@ int compare_device_uuids(int fd, uint64_t device_size, uuid_t expected_device_uu
     return 1;
 }
 
-int find_device(char   * preferred_dev_name,
-                int      must_match,
-                size_t   expected_device_size,
-                size_t   physical_device_size,
-                char   * bod_buffer,
-                char   * mod_buffer,
-                size_t   bod_mod_buffer_size,
-                uuid_t   expected_device_uuid,
-                char   * sector_map,
-                char   **matched_dev_name,
-                dev_t  * matched_dev_num,
-                int    * newfd) {
+void free_device_search_result(device_search_result_t *result) {
+    if(result) {
+        if(result->device_name) {
+            free(result->device_name);
+        }
+
+        free(result);
+    }
+}
+
+device_search_result_t *create_device_search_result(char *device_name, dev_t device_num, int fd) {
+    device_search_result_t *result = malloc(sizeof(device_search_result_t));
+
+    if(!result) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
+        return NULL;
+    }
+
+    memset(result, 0, sizeof(device_search_result_t));
+
+    result->device_name = strdup(device_name);
+    if(!result->device_name) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
+        free_device_search_result(result);
+        return NULL;
+    }
+
+    result->device_num = device_num;
+    result->fd = fd;
+
+    return result;
+}
+
+device_search_result_t *find_device(device_search_params_t *device_search_params) {
     struct udev *udev_handle;
     struct udev_enumerate *udev_enum;
     struct udev_list_entry *list_entry;
@@ -455,6 +477,7 @@ int find_device(char   * preferred_dev_name,
     char **matched_devices = NULL, **new_matched_devices;
     int num_matches = 0, match_index;
     struct stat fs;
+    device_search_result_t *result;
 
     void free_matched_devices() {
         for(int j = 0; j < num_matches; j++) {
@@ -464,37 +487,49 @@ int find_device(char   * preferred_dev_name,
         free(matched_devices);
     }
 
-    if(must_match) {
-        if(!preferred_dev_name) {
+    if(!device_search_params) {
+        errno = EFAULT;
+        return NULL;
+    }
+
+    if(device_search_params->must_match_preferred_dev_name) {
+        if(!device_search_params->preferred_dev_name) {
+            // must_match_preferred_dev_name was set to 1, but preferred_dev_name was set to NULL
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MUST_MATCH_WITHOUT_PREFERRED_DEV_NAME);
 
             errno = EINVAL;
-            return -1;
+            return NULL;
         }
 
-        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_CHECKING_DEVICE, preferred_dev_name);
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_CHECKING_DEVICE, device_search_params->preferred_dev_name);
 
         // Let's just probe preferred_dev_name instead of bothering udev
-        if((fd = open(preferred_dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
+        if((fd = open(device_search_params->preferred_dev_name, O_LARGEFILE | O_RDONLY)) == -1) {
+            // Failed to open() device
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_OPEN_ERROR, strerror(errno));
-            return 0;
+
+            errno = EINTR;
+            return NULL;
         }
 
         if(ioctl(fd, BLKGETSIZE64, &reported_device_size)) {
+            // Failed to get size of device
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_IOCTL_ERROR, strerror(errno));
-
             close(fd);
-            return 0;
+
+            errno = EINTR;
+            return NULL;
         }
 
-        if(reported_device_size != expected_device_size) {
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_DEVICE_SIZE_MISMATCH, expected_device_size, reported_device_size);
-
+        if(reported_device_size != device_search_params->logical_device_size) {
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_DEVICE_SIZE_MISMATCH, device_search_params->logical_device_size, reported_device_size);
             close(fd);
-            return 0;
+
+            errno = ENODEV;
+            return NULL;
         }
 
-        if(ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size)) {
+        if(ret = compare_bod_mod_data(fd, device_search_params->physical_device_size, device_search_params->bod_buffer, device_search_params->mod_buffer, device_search_params->bod_mod_buffer_size)) {
             if(ret == -1) {
                 log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_COMPARE_BOD_MOD_DATA_ERROR);
             } else {
@@ -502,42 +537,58 @@ int find_device(char   * preferred_dev_name,
             }
 
             // Try to match by the device UUID
-            if(expected_device_uuid) {
-                if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
+            if(device_search_params->expected_device_uuid) {
+                if(ret = compare_device_uuids(fd, device_search_params->physical_device_size, device_search_params->expected_device_uuid, device_search_params->sector_map)) {
                     if(ret == -1) {
-                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, preferred_dev_name);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, device_search_params->preferred_dev_name);
                     } else {
-                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_UUIDS_MISMATCH, preferred_dev_name);
+                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_UUIDS_MISMATCH, device_search_params->preferred_dev_name);
                     }
                 } else {
-                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MATCHED_DEVICE_BY_COMPARING_DEVICE_UUIDS, preferred_dev_name);
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MATCHED_DEVICE_BY_COMPARING_DEVICE_UUIDS, device_search_params->preferred_dev_name);
                 }
             }
 
             close(fd);
 
             if(ret) {
-                return 0;
+                // stat the new device -- we need its st_rdev
+                if(stat(device_search_params->preferred_dev_name, &fs)) {
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_STAT_ERROR, device_search_params->preferred_dev_name, strerror(errno));
+                    errno = EINTR;
+                    return NULL;
+                }
+
+                // Re-open the device
+                if((fd = open(device_search_params->preferred_dev_name, O_DIRECT | O_SYNC | O_LARGEFILE | O_RDWR)) == -1) {
+                    // Well crap.
+                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_OPEN_ERROR, device_search_params->preferred_dev_name, strerror(errno));
+
+                    errno = EINTR;
+                    return NULL;
+                }
+
+                return create_device_search_result(device_search_params->preferred_dev_name, fs.st_rdev, fd);
             }
         } else {
             close(fd);
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_BOD_MOD_DATA_MATCH, preferred_dev_name);
+            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_BOD_MOD_DATA_MATCH, device_search_params->preferred_dev_name);
         }
 
         // Add the device to our list of devices
         if(!(matched_devices = malloc(++num_matches * sizeof(char *)))) {
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
             errno = ENOMEM;
-            return -1;
+            return NULL;
         }
 
-        if(!(matched_devices[0] = strdup(preferred_dev_name))) {
+        if(!(matched_devices[0] = strdup(device_search_params->preferred_dev_name))) {
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
 
-            free(matched_devices);
+            free_matched_devices();
 
             errno = ENOMEM;
-            return -1;
+            return NULL;
         }
     } else {
         // Scan through the available block devices
@@ -548,7 +599,7 @@ int find_device(char   * preferred_dev_name,
             free_matched_devices();
 
             errno = ELIBACC;
-            return -1;
+            return NULL;
         }
 
         if(!(udev_enum = udev_enumerate_new(udev_handle))) {
@@ -558,7 +609,7 @@ int find_device(char   * preferred_dev_name,
             free_matched_devices();
 
             errno = ELIBACC;
-            return -1;
+            return NULL;
         }
 
         if(udev_enumerate_add_match_subsystem(udev_enum, "block") < 0) {
@@ -569,7 +620,7 @@ int find_device(char   * preferred_dev_name,
             free_matched_devices();
 
             errno = ELIBACC;
-            return -1;
+            return NULL;
         }
 
         if(udev_enumerate_scan_devices(udev_enum) < 0) {
@@ -580,7 +631,7 @@ int find_device(char   * preferred_dev_name,
             free_matched_devices();
 
             errno = ELIBACC;
-            return -1;
+            return NULL;
         }
 
         if(!(list_entry = udev_enumerate_get_list_entry(udev_enum))) {
@@ -593,7 +644,7 @@ int find_device(char   * preferred_dev_name,
             free_matched_devices();
 
             errno = ELIBACC;
-            return -1;
+            return NULL;
         }
 
         while(list_entry) {
@@ -617,8 +668,8 @@ int find_device(char   * preferred_dev_name,
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_LOOKING_AT_DEVICE, dev_name);
 
             reported_device_size = strtoull(dev_size_str, NULL, 10) * 512;
-            if(reported_device_size != expected_device_size) {
-                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_DEVICE_SIZE_MISMATCH, dev_name, expected_device_size, reported_device_size);
+            if(reported_device_size != device_search_params->logical_device_size) {
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_DEVICE_SIZE_MISMATCH, dev_name, device_search_params->logical_device_size, reported_device_size);
 
                 udev_device_unref(device);
                 list_entry = udev_list_entry_get_next(list_entry);
@@ -633,16 +684,16 @@ int find_device(char   * preferred_dev_name,
                 continue;
             }
 
-            if(ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size)) {
+            if(ret = compare_bod_mod_data(fd, device_search_params->physical_device_size, device_search_params->bod_buffer, device_search_params->mod_buffer, device_search_params->bod_mod_buffer_size)) {
                 if(ret == -1) {
                     log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_BOD_MOD_ERROR, dev_name);
                 } else {
                     log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_BOD_MOD_MISMATCH, dev_name);
                 }
 
-                if(expected_device_uuid) {
+                if(device_search_params->expected_device_uuid) {
                     log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARING_DEVICE_UUIDS);
-                    if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
+                    if(ret = compare_device_uuids(fd, device_search_params->physical_device_size, device_search_params->expected_device_uuid, device_search_params->sector_map)) {
                         if(ret == -1) {
                             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, dev_name);
                         } else {
@@ -677,7 +728,7 @@ int find_device(char   * preferred_dev_name,
                 free_matched_devices();
 
                 errno = ENOMEM;
-                return -1;
+                return NULL;
             }
 
             matched_devices = new_matched_devices;
@@ -691,7 +742,7 @@ int find_device(char   * preferred_dev_name,
                 free_matched_devices();
 
                 errno = ENOMEM;
-                return -1;
+                return NULL;
             }
 
             udev_device_unref(device);
@@ -709,10 +760,10 @@ int find_device(char   * preferred_dev_name,
     } else if(num_matches > 1) {
         // We found more than one match.  Was a preferred_dev_name provided?
         match_index = -1;
-        if(preferred_dev_name) {
+        if(device_search_params->preferred_dev_name) {
             // Does preferred_dev_name match one of the devices we found?
             for(i = 0; i < num_matches; i++) {
-                if(!are_devices_identical(preferred_dev_name, matched_devices[i])) {
+                if(!are_devices_identical(device_search_params->preferred_dev_name, matched_devices[i])) {
                     // Cool, we found a match.
                     match_index = i;
                 }
@@ -723,13 +774,14 @@ int find_device(char   * preferred_dev_name,
             // We didn't find a match.
             free_matched_devices();
 
-            if(preferred_dev_name) {
+            if(device_search_params->preferred_dev_name) {
                 log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_AMBIGUOUS_PREFERRED_DEV);
             } else {
                 log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_AMBIGUOUS_RESULT_NO_PREFERRED_DEV);
             }
 
-            return num_matches;
+            errno = ENOTUNIQ;
+            return NULL;
         }
     } else {
         match_index = 0;
@@ -742,7 +794,7 @@ int find_device(char   * preferred_dev_name,
         free_matched_devices();
 
         errno = EINTR;
-        return -1;
+        return NULL;
     }
 
     // Ok, we have a single match.  Re-open the device read/write.
@@ -753,36 +805,16 @@ int find_device(char   * preferred_dev_name,
         free_matched_devices();
 
         errno = EINTR;
-        return -1;
+        return NULL;
     }
 
     // Set newfd, matched_dev_name, and matched_dev_num
-    *newfd            = fd;
-    *matched_dev_name = matched_devices[match_index];
-    *matched_dev_num  = fs.st_rdev;
-
-    // Free all the matched devices *except* for the one at match_index
-    for(i = 0; i < num_matches; i++) {
-        if(i != match_index) {
-            free(matched_devices[i]);
-        }
-    }
-
-    free(matched_devices);
-
-    return 1;
+    result = create_device_search_result(matched_devices[match_index], fs.st_rdev, fd);
+    free_matched_devices();
+    return result;
 }
 
-int wait_for_device_reconnect(size_t   expected_device_size,
-                              size_t   physical_device_size,
-                              char   * bod_buffer,
-                              char   * mod_buffer,
-                              size_t   bod_mod_buffer_size,
-                              uuid_t   expected_device_uuid,
-                              char   * sector_map,
-                              char   **matched_dev_name,
-                              dev_t  * matched_dev_num,
-                              int    * newfd) {
+device_search_result_t *wait_for_device_reconnect(device_search_params_t *device_search_params) {
     struct udev_monitor *monitor;
     struct udev_device *device;
     struct udev *udev_handle;
@@ -792,10 +824,17 @@ int wait_for_device_reconnect(size_t   expected_device_size,
     int fd, ret;
     char *new_dev_name;
     struct stat fs;
+    device_search_result_t *result;
+
+    if(!device_search_params) {
+        errno = EFAULT;
+        return NULL;
+    }
 
     udev_handle = udev_new();
     if(!udev_handle) {
-        return -1;
+        errno = ELIBACC;
+        return NULL;
     }
 
     monitor = udev_monitor_new_from_netlink(udev_handle, "udev");
@@ -803,7 +842,8 @@ int wait_for_device_reconnect(size_t   expected_device_size,
         log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_UDEV_MONITOR_NEW_FROM_NETLINK_ERROR);
 
         udev_unref(udev_handle);
-        return -1;
+        errno = ELIBACC;
+        return NULL;
     }
 
     if(udev_monitor_filter_add_match_subsystem_devtype(monitor, "block", "disk") < 0) {
@@ -811,7 +851,8 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
         udev_monitor_unref(monitor);
         udev_unref(udev_handle);
-        return -1;
+        errno = ELIBACC;
+        return NULL;
     }
 
     if(udev_monitor_enable_receiving(monitor) < 0) {
@@ -819,7 +860,8 @@ int wait_for_device_reconnect(size_t   expected_device_size,
 
         udev_monitor_unref(monitor);
         udev_unref(udev_handle);
-        return -1;
+        errno = ELIBACC;
+        return NULL;
     }
 
     while(1) {
@@ -844,9 +886,9 @@ int wait_for_device_reconnect(size_t   expected_device_size,
             }
 
             reported_device_size = strtoull(dev_size_str, NULL, 10) * 512;
-            if(reported_device_size != expected_device_size) {
+            if(reported_device_size != device_search_params->logical_device_size) {
                 // Device's reported size doesn't match
-                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_DEVICE_SIZE_MISMATCH, dev_name, expected_device_size, reported_device_size);
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_DEVICE_DEVICE_SIZE_MISMATCH, dev_name, device_search_params->logical_device_size, reported_device_size);
 
                 udev_device_unref(device);
                 continue;
@@ -859,7 +901,7 @@ int wait_for_device_reconnect(size_t   expected_device_size,
                 continue;
             }
 
-            ret = compare_bod_mod_data(fd, physical_device_size, bod_buffer, mod_buffer, bod_mod_buffer_size);
+            ret = compare_bod_mod_data(fd, device_search_params->physical_device_size, device_search_params->bod_buffer, device_search_params->mod_buffer, device_search_params->bod_mod_buffer_size);
 
             if(ret) {
                 if(ret == -1) {
@@ -868,9 +910,9 @@ int wait_for_device_reconnect(size_t   expected_device_size,
                     log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_BOD_MOD_MISMATCH, dev_name);
                 }
 
-                if(expected_device_uuid) {
+                if(device_search_params->expected_device_uuid) {
                     log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARING_DEVICE_UUIDS);
-                    if(ret = compare_device_uuids(fd, physical_device_size, expected_device_uuid, sector_map)) {
+                    if(ret = compare_device_uuids(fd, device_search_params->physical_device_size, device_search_params->expected_device_uuid, device_search_params->sector_map)) {
                         if(ret == -1) {
                             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_COMPARE_DEVICE_UUIDS_ERROR, dev_name);
                         } else {
@@ -919,18 +961,17 @@ int wait_for_device_reconnect(size_t   expected_device_size,
                 udev_monitor_unref(monitor);
                 udev_unref(udev_handle);
 
-                return -1;
+                errno = EINTR;
+                return NULL;
             }
 
-            *matched_dev_name = new_dev_name;
-            *matched_dev_num = fs.st_rdev;
-            *newfd = fd;
+            result = create_device_search_result(new_dev_name, fs.st_rdev, fd);
 
             // Cleanup and exit
             udev_device_unref(device);
             udev_monitor_unref(monitor);
             udev_unref(udev_handle);
-            return 0;
+            return result;
         }
 
         usleep(100000);
@@ -973,6 +1014,8 @@ int reset_device(int device_fd) {
     dev_t device_num, new_device_num;
     int fd, ret;
     struct stat dev_stat;
+    device_search_params_t device_search_params;
+    device_search_result_t *device_search_result;
 
     if(ret = fstat(device_fd, &dev_stat)) {
         // Can't stat the device
@@ -1026,27 +1069,32 @@ int reset_device(int device_fd) {
 
     close(fd);
 
-    ret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
-                      sector_display.sector_map, &new_device_name, &new_device_num, &fd);
-    if(ret == -1) {
-      return -1;
-    } else if(ret == 0) {
-        if(wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, sector_display.sector_map,
-                                     &new_device_name, &new_device_num, &fd)) {
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WAIT_FOR_DEVICE_RECONNECT_ERROR);
+    device_search_params.logical_device_size = device_stats.reported_size_bytes;
+    device_search_params.physical_device_size = device_stats.detected_size_bytes;
+    device_search_params.bod_buffer = bod_buffer;
+    device_search_params.mod_buffer = mod_buffer;
+    device_search_params.bod_mod_buffer_size = BOD_MOD_BUFFER_SIZE;
+    uuid_copy(device_search_params.expected_device_uuid, device_stats.device_uuid);
+    device_search_params.sector_map = sector_display.sector_map;
+    device_search_params.preferred_dev_name = program_options.device_name;
+    device_search_params.must_match_preferred_dev_name = 0;
+
+    if(!(device_search_result = find_device(&device_search_params))) {
+        if(errno == ENOENT) {
+            if(!(device_search_result = wait_for_device_reconnect(&device_search_params))) {
+                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WAIT_FOR_DEVICE_RECONNECT_ERROR);
+                return -1;
+            }
+        } else if(errno == ENOTUNIQ) {
             return -1;
         }
-    } else if(ret > 1) {
-        // There is an edge case where two identical devices start a round at
-        // the same time, the random seeds end up being the same, and as a
-        // result, they end up having the same BOD/MOD data.  At some point I
-        // need to do something like prompt the user to fix this by selecting
-        // the right device or waiting for the other device(s) BOD/MOD data to
-        // change on its own (e.g., if another process is testing the device).
     }
 
     free(program_options.device_name);
-    program_options.device_name = new_device_name;
-    device_stats.device_num = new_device_num;
+    program_options.device_name = device_search_result->device_name;
+    device_stats.device_num = device_search_result->device_num;
+    fd = device_search_result->fd;
+
+    free(device_search_result);
     return fd;
 }

@@ -1818,7 +1818,8 @@ int handle_device_disconnect(int *fd, off_t position, int seek_after_reconnect) 
     dev_t new_device_num;
     int ret;
     main_thread_status_type previous_status = main_thread_status;
-
+    device_search_params_t device_search_params;
+    device_search_result_t *device_search_result;
     main_thread_status = MAIN_THREAD_STATUS_DEVICE_DISCONNECTED;
 
     if(*fd != -1) {
@@ -1828,19 +1829,35 @@ int handle_device_disconnect(int *fd, off_t position, int seek_after_reconnect) 
 
     log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_DISCONNECTED);
     window = device_disconnected_message();
-    ret = wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid, sector_display.sector_map, &new_device_name, &new_device_num, fd);
+
+    device_search_params.logical_device_size = device_stats.reported_size_bytes;
+    device_search_params.physical_device_size = device_stats.detected_size_bytes;
+    device_search_params.bod_buffer = bod_buffer;
+    device_search_params.mod_buffer = mod_buffer;
+    device_search_params.bod_mod_buffer_size = BOD_MOD_BUFFER_SIZE;
+    uuid_copy(device_search_params.expected_device_uuid, device_stats.device_uuid);
+    device_search_params.sector_map = sector_display.sector_map;
+    device_search_params.preferred_dev_name = NULL;
+    device_search_params.must_match_preferred_dev_name = 0;
+
+    device_search_result = wait_for_device_reconnect(&device_search_params);
+
     handle_key_inputs(window);
     main_thread_status = previous_status;
 
-    if(ret != -1) {
-        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RECONNECTED, new_device_name);
+    if(device_search_result) {
+        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_DEVICE_RECONNECTED, device_search_result->device_name);
+
+        *fd = device_search_result->fd;
 
         if(program_options.device_name) {
             free(program_options.device_name);
         }
 
-        program_options.device_name = new_device_name;
-        device_stats.device_num = new_device_num;
+        program_options.device_name = device_search_result->device_name;
+        device_stats.device_num = device_search_result->device_num;
+
+        free_device_search_result(device_search_result);
 
         if(seek_after_reconnect) {
             if(lseek_or_reset_device(fd, position, NULL) == -1) {
@@ -3020,6 +3037,8 @@ int main(int argc, char **argv) {
     sql_thread_params_type sql_thread_params;
     sql_thread_status_type prev_sql_thread_status = 0;
     int num_uuid_mismatches, device_mangling_detected;
+    device_search_params_t device_search_params;
+    device_search_result_t *device_search_result;
 
     // Set things up so that cleanup() works properly
     sector_display.sector_map = NULL;
@@ -3215,42 +3234,71 @@ int main(int argc, char **argv) {
         log_log(NULL, SEVERITY_LEVEL_INFO, MSG_FINDING_DEVICE_FROM_STATE_FILE);
         window = message_window(stdscr, NULL, "Finding device described in state file...", 0);
 
-        iret = find_device(program_options.device_name, 0, device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
-                           sector_display.sector_map, &new_device_name, &new_device_num, &fd);
+        device_search_params.logical_device_size = device_stats.reported_size_bytes;
+        device_search_params.physical_device_size = device_stats.detected_size_bytes;
+        device_search_params.bod_buffer = bod_buffer;
+        device_search_params.mod_buffer = mod_buffer;
+        device_search_params.bod_mod_buffer_size = BOD_MOD_BUFFER_SIZE;
+        uuid_copy(device_search_params.expected_device_uuid, device_stats.device_uuid);
+        device_search_params.sector_map = sector_display.sector_map;
+        device_search_params.preferred_dev_name = program_options.device_name;
+        device_search_params.must_match_preferred_dev_name = 0;
+
+        device_search_result = find_device(&device_search_params);
 
         erase_and_delete_window(window);
 
-        if(iret == -1) {
-            device_locate_error();
-            cleanup();
-            return -1;
-        } else if(iret > 1) {
-            multiple_matching_devices_error();
-            cleanup();
-            return -1;
-        } else if(iret == 0) {
-            if(program_options.device_name) {
-                wrong_device_specified_error();
+        if(!device_search_result) {
+            if(errno == ENOTUNIQ) {
+                multiple_matching_devices_error();
                 cleanup();
                 return -1;
-            } else {
-                window = no_matching_device_warning();
-                if(wait_for_device_reconnect(device_stats.reported_size_bytes, device_stats.detected_size_bytes, bod_buffer, mod_buffer, BOD_MOD_BUFFER_SIZE, device_stats.device_uuid,
-                                             sector_display.sector_map, &program_options.device_name, &device_stats.device_num, &fd) == -1) {
-                    wait_for_device_connect_error(window);
+            } else if(errno == ENODEV) {
+                if(program_options.device_name) {
+                    wrong_device_specified_error();
                     cleanup();
                     return -1;
                 } else {
-                    erase_and_delete_window(window);
+                    window = no_matching_device_warning();
+
+                    device_search_params.logical_device_size = device_stats.reported_size_bytes;
+                    device_search_params.physical_device_size = device_stats.detected_size_bytes;
+                    device_search_params.bod_buffer = bod_buffer;
+                    device_search_params.mod_buffer = mod_buffer;
+                    device_search_params.bod_mod_buffer_size = BOD_MOD_BUFFER_SIZE;
+                    uuid_copy(device_search_params.expected_device_uuid, device_stats.device_uuid);
+                    device_search_params.sector_map = sector_display.sector_map;
+                    device_search_params.preferred_dev_name = NULL;
+                    device_search_params.must_match_preferred_dev_name = 0;
+
+                    if(!(device_search_result = wait_for_device_reconnect(&device_search_params))) {
+                        wait_for_device_connect_error(window);
+                        cleanup();
+                        return -1;
+                    } else {
+                        program_options.device_name = device_search_result->device_name;
+                        device_stats.device_num = device_search_result->device_num;
+                        fd = device_search_result->fd;
+
+                        free_device_search_result(device_search_result);
+                        erase_and_delete_window(window);
+                    }
                 }
+            } else {
+                device_locate_error();
+                cleanup();
+                return -1;
             }
         } else {
             if(program_options.device_name) {
                 free(program_options.device_name);
             }
 
-            program_options.device_name = new_device_name;
-            device_stats.device_num = new_device_num;
+            program_options.device_name = device_search_result->device_name;
+            device_stats.device_num = device_search_result->device_num;
+            fd = device_search_result->fd;
+
+            free_device_search_result(device_search_result);
         }
 
         if(fstat(fd, &fs)) {

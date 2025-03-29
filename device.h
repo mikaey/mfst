@@ -5,6 +5,96 @@
 #include <uuid/uuid.h>
 
 /**
+ * A struct for providing search parameters for locating a device.
+ */
+typedef struct _device_search_params_t {
+    /**
+     * The logical size of the device (e.g., the size of the device as reported
+     * by the device), in bytes.
+     */
+    size_t logical_device_size;
+
+    /**
+     * The expected physical size of the device (e.g., the actual usable area of
+     * the device), in bytes.
+     */
+    size_t physical_device_size;
+
+    /**
+     * A buffer containing the data expected to appear at the beginning of the
+     * device.  The buffer is expected to be at least as big as indicated by
+     * bod_mod_buffer_size.
+     */
+    char  *bod_buffer;
+
+    /**
+     * A buffer containing the data expected to appear in the middle of the
+     * device.  The buffer is expected to be at least as big as indicated by
+     * bod_mod_buffer_size.
+     */
+    char  *mod_buffer;
+
+    /**
+     * The size of bod_buffer and mod_buffer, in bytes.
+     */
+    size_t bod_mod_buffer_size;
+
+    /**
+     * The UUID that is expected to be embedded in each sector of the device,
+     * or NULL if the device is not expected to have an embedded UUID.
+     */
+    uuid_t expected_device_uuid;
+
+    /**
+     * The device's sector map.
+     */
+    char  *sector_map;
+
+    /**
+     * The preferred path to the device, or NULL if no device should be
+     * preferred  If a device search matches multiple devices, and the device
+     * specified here is among the matches, the search will succeed and the
+     * device specified here will be used.
+     *
+     * This parameter is only used by find_device().  It is ignored by
+     * wait_for_device_reconnect().
+     */
+    char  *preferred_dev_name;
+
+    /**
+     * Non-zero if the device search must match the device specified in
+     * preferred_dev_name, or zero if an exact match is not required.  If
+     * preferred_dev_name is NULL, this must be set to 0; setting it to a
+     * non-zero value results in an error.
+     *
+     * This parameter is only used by find_device().  It is ignored by
+     * wait_for_device_reconnect().
+     */
+    int    must_match_preferred_dev_name;
+} device_search_params_t;
+
+/**
+ * A struct used to return info on a matched device.
+ */
+typedef struct _device_search_result_t {
+    /**
+     * A pointer to a null-terminated string containing the name of the matched
+     * device.
+     */
+    char *device_name;
+
+    /**
+     * The device number of the matched device.
+     */
+    dev_t device_num;
+
+    /**
+     * The file handle of the matched device.
+     */
+    int   fd;
+} device_search_result_t;
+
+/**
  * Tries to determine whether the device was disconnected from the system.
  *
  * @param device_num  The device number of the device to test.
@@ -16,133 +106,65 @@ int did_device_disconnect(dev_t device_num);
 
 /**
  * Looks at all block devices for one that matches the geometry described in
- * device_stats and whose BOD/MOD data matches either bod_buffer or mod_buffer,
- * respectively.  If it finds a single device that matches the given criteria,
- * it opens it, sets *matched_dev_name to the name of the matched device, and
- * sets *newfd to the opened file handle.  If multiple devices or no devices
- * match the given criteria, no action is taken and *matched_dev_name and *newfd
- * are left unmodified.
+ * device_search_params.  If it finds a single device that matches the given
+ * criteria, it opens it and returns a device_search_result_t containing the
+ * info on the device (which includes an open file handle to the device).
  *
- * If must_match is set to 0, preferred_dev_name can be used to suggest the name
- * of a device.
+ * If must_match_preferred_dev_name is set to 0, preferred dev_name can be used
+ * to suggest the path to the device file.
  *  - If there is an ambiguity, preferred_dev_name will be used to resolve the
  *    ambiguity (if set).
  *  - If there is an ambiguity, but none of the discovered devices matches the
  *    one set in preferred_dev_name, this function will return an error.
  *  - If there is no ambiguity, preferred_dev_name will be ignored.
  *
- * If must_match is set to a non-zero value, preferred_dev_name must be set to
- * the name of the device to match against.
+ * If must_match_preferred_dev_name is set to a non-zero value,
+ * preferred_dev_name must be set to the name of the device to match against.
  *  - If preferred_dev_name is set to NULL, this function returns an error.
  *  - If the specified device does not match the provided parameters, this
  *    function will return an error.
  *
- * @param preferred_dev_name    Indicates the path to the preferred device.
- * @param must_match            Indicates whether the device found must match
- *                              the one specified in preferred_dev_name.
- * @param expected_device_size  The logical size of the expected device (e.g.,
- *                              the size of the device, as reported by the
- *                              device), in bytes.
- * @param physical_device_size  The physical size of the expected device (e.g.,
- *                              the size of the device, as discovered by probing
- *                              the device), in bytes.
- * @param bod_buffer            A pointer to a buffer that holds the data
- *                              expected to be present at the beginning of the
- *                              device.
- * @param mod_buffer            A pointer to a buffer that holds the data
- *                              expected to be present at the middle of the
- *                              device.
- * @param bod_mod_buffer_size   The size of bod_buffer and mod_buffer, in bytes.
- * @param expected_device_uuid  The device UUID, or null if the device UUID
- *                              should not be checked.
- * @param sector_map            A pointer to the current sector map for the
- *                              expected device.
- * @param matched_dev_name      A pointer to a char * that will receive the name
- *                              of the matched device.  Memory for this string
- *                              is allocated using malloc() and must be freed
- *                              with free() when no longer needed.  If no
- *                              matching device can be found, or if an error
- *                              occurs, the contents of *matched_dev_name are
- *                              not modified.
- * @param matched_dev_num       A pointer to a dev_t that will receive the
- *                              device number of the matched device.  If no
- *                              matching device can be found, or if an error
- *                              occurs, the contents of *matched_dev_num are not
- *                              modified.
- * @param newfd                 A pointer to an int that will receive the file
- *                              handle for the newly opened device.  If no
- *                              matching device can be found, or if an error
- *                              occurs, the contents of *newfd are not modified.
+ * @param device_search_params  A device_search_params_t containing information
+ *                              on the device being searched for.
  *
- * @returns The number of matched devices, or -1 if an error occurred.  In the
- *          event of an error, errno will be set to one of the following values:
- *          - EINVAL   must_match was set to a non-zero value, but
- *                     preferred_dev_name was set to NULL.
- *          - ENOMEM   A call to malloc() or realloc() failed.
- *          - ELIBACC  A call to a udev function returned an unexpected error.
- *          - EINTR    A matching device was found, but an error occurred while
- *                     trying to stat() or open() the device.
+ * @returns A pointer to a device_search_result_t containing the information on
+ *          the matched device, or NULL if an error occurred.  In the event of
+ *          an error, errno will be set to one of the following values:
+ *          - EFAULT   device_search_params was set to NULL.
+ *          - ENODEV   No devices were found that matched the given parameters.
+ *          - ENOTUNIQ More than one device was found that matched the given
+ *                     parameters, but none of the matched devices matched the
+ *                     one specified by preferred_dev_name (or
+ *                     preferred_dev_name was set to NULL)
+ *          - EINVAL   must_match_preferred_dev_name was set to a non-zero
+ *                     value, but preferred_dev_name was set to NULL.
+ *          - ENOMEM   A memory allocation error occurred.
+ *          - ELIBACC  A call to a udev_* function returned an unexpected error.
+ *          - EINTR    An error occurred while trying to stat() or open() the
+ *                     device.
+ *
+ *          Note that the returned object should be freed by the caller using
+ *          free_device_search_result() once finished.
  */
-int find_device(char   * preferred_dev_name,
-                int      must_match,
-                size_t   expected_device_size,
-                size_t   physical_device_size,
-                char   * bod_buffer,
-                char   * mod_buffer,
-                size_t   bod_mod_buffer_size,
-                uuid_t   expected_device_uuid,
-                char   * sector_map,
-                char   **matched_dev_name,
-                dev_t  * matched_dev_num,
-                int    * newfd);
+device_search_result_t *find_device(device_search_params_t *device_search_params);
 
 /**
  * Monitor for new block devices.  When a new block device is detected, compare
  * it to the information provided.  If it's a match, open a new file handle for
- * it.
+ * it.  Note that this function blocks until a matching device is discovered.
  *
- * @param expected_device_size  The logical size of the expected device (e.g.,
- *                              the size of the device, as reported by the
- *                              device), in bytes.
- * @param physical_device_size  The physical size of the expected device (e.g.,
- *                              the size of the device, as discovered by probing
- *                              the device), in bytes.
- * @param bod_buffer            A pointer to a buffer containing the data
- *                              expected to be present at the beginning of the
- *                              device.
- * @param mod_buffer            A pointer to a buffer containing the data
- *                              expected to be present at the middle of the
- *                              device.
- * @param bod_mod_buffer_size   The number of bytes in bod_buffer and mod_buffer
- *                              (each).
- * @param expected_device_uuid  The device UUID, or null if the device UUID
- *                              should not be checked.
- * @param sector_map            A pointer to the current sector map for the
- *                              expected device.
- * @param matched_dev_name      A pointer to a char * that will receive the name
- *                              of the matched device.  Note that the memory for
- *                              the new string will be allocated using malloc()
- *                              and must be freed using free() when no longer
- *                              needed.
- * @param matched_dev_num       A pointer to a dev_t that will receive the
- *                              device number of the matched device.
- * @param newfd                 A pointer to an int that will receive the file
- *                              handle for the opened device.
+ * @param device_search_params  A device_search_params_t containing information
+ *                              on the device to search for.
  *
- * @returns 0 if a new device was successfully discovered, or -1 if an error
- *          occurred.  Note that this function blocks until a matching device is
- *          discovered.
+ * @returns A pointer to a new device_search_result_t containing the information
+ *          on the matched device, or NULL if an error occurred.  In the event
+ *          of an error, errno will be set to one of the following values:
+ *          - EFAULT   device_search_params was set to NULL.
+ *          - ELIBACC  A call to a udev_* function returned an unexpected error.
+ *          - EINTR    An error occurred while calling strdup() to copy the name
+ *                     of the found device.
  */
-int wait_for_device_reconnect(size_t   expected_device_size,
-                              size_t   physical_device_size,
-                              char   * bod_buffer,
-                              char   * mod_buffer,
-                              size_t   bod_mod_buffer_size,
-                              uuid_t   expected_device_uuid,
-                              char   * sector_map,
-                              char   **matched_dev_name,
-                              dev_t  * matched_dev_num,
-                              int    * newfd);
+device_search_result_t *wait_for_device_reconnect(device_search_params_t *device_search_params);
 
 /**
  * Determines whether the device described in device_num is a device that we
@@ -173,5 +195,12 @@ int reset_device(int device_fd);
  *          block device, or -1 if an error occurred.
  */
 int is_block_device(char *filename);
+
+/**
+ * Frees a device_search_result_t object.
+ *
+ * @param result  A pointer to the device_search_result_t object to be freed.
+ */
+void free_device_search_result(device_search_result_t *result);
 
 #endif // !defined(DEVICE_H)
