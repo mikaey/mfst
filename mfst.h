@@ -505,5 +505,7 @@ extern volatile main_thread_status_type main_thread_status;
 extern const char *WARNING_TITLE;
 extern const char *ERROR_TITLE;
 
+extern char speed_qualifications_shown;
+
 #endif // !defined(__MFST_H)
 

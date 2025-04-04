@@ -38,10 +38,10 @@ WINDOW *message_window(WINDOW *parent, const char *title, char *msg, char wait);
 
 /**
  * A wrapper for getch()/wgetch() that handles KEY_RESIZE events.
- * 
+ *
  * @param curwin  The active window, or NULL if no window/stdscr is the active
  *                window.
- * 
+ *
  * @returns If getch()/wgetch() returns KEY_RESIZE, this function intercepts
  *          the event and returns ERR.  Otherwise, this function returns
  *          whatever getch()/wgetch() returned.
@@ -54,5 +54,17 @@ int handle_key_inputs(WINDOW *curwin);
  * @param window  The window to erase and delete.
  */
 void erase_and_delete_window(WINDOW *window);
+
+/**
+ * Move to the given y/x position, enable the specified color, print out the
+ * given string, the disable the specified color.  The cursor is not relocated
+ * after the given string has been written.
+ *
+ * @param y      The Y coordinate to move the cursor to.
+ * @param x      The X coordinate to move the cursor to.
+ * @param color  The index of the color pair to use.
+ * @param str    The message to write to the screen.
+ */
+void print_with_color(int y, int x, int color, const char *str);
 
 #endif // !defined(NCURSES_H)

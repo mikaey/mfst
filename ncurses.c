@@ -230,3 +230,10 @@ void erase_and_delete_window(WINDOW *window) {
     }
 }
 
+void print_with_color(int y, int x, int color, const char *str) {
+    if(!program_options.no_curses) {
+        attron(COLOR_PAIR(color));
+        mvaddstr(y, x, str);
+        attroff(COLOR_PAIR(color));
+    }
+}
