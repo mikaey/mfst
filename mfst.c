@@ -145,7 +145,7 @@ void log_log(const char *funcname, int severity, int msg, ...) {
  * * The rate at which sectors are failing verification (in counts/minut) --
  *   note that sectors which failed verification during a previous round of
  *   testing are not accounted for in this number)
- * 
+ *
  * @param rounds         The number of read/write/verify rounds that have been
  *                       completed against the device so far.
  * @param bytes_written  The total number of bytes written to the device so
@@ -192,7 +192,7 @@ void stats_log(uint64_t rounds, uint64_t bad_sectors) {
 /**
  * Draw the block containing the given sector in the given color.  The display
  * is not refreshed after the block is drawn.
- * 
+ *
  * @param sector_num    The sector number of the sector to draw.
  * @param color         The ID of the color pair specifying the colors to draw
  *                      the block in.
@@ -235,7 +235,7 @@ void draw_sector(uint64_t sector_num, int color, int with_diamond, int with_x) {
 /**
  * Redraw the blocks containing the given sectors.  The display is not
  * refreshed after the blocks are drawn.
- * 
+ *
  * @param start_sector  The sector number of the first sector to be redrawn.
  * @param end_sector    The sector number at which to stop redrawing.  (Ergo,
  *                      all sectors within the range [start_sector, end_sector)
@@ -306,7 +306,7 @@ void draw_sectors(uint64_t start_sector, uint64_t end_sector) {
  * Mark the given sectors as "written" in the sector map.  The blocks
  * containing the given sectors are redrawn on the display.  The display is not
  * refreshed after the blocks are drawn.
- * 
+ *
  * @param start_sector  The sector number of the first sector to be marked as
  *                      written.
  * @param end_sector    The sector number at which to stop marking sectors as
@@ -327,7 +327,7 @@ void mark_sectors_written(uint64_t start_sector, uint64_t end_sector) {
  * Mark the given sectors as "read" in the sector map.  The blocks containing
  * the given sectors are redrawn on the display.  The display is not refreshed
  * after the blocks are drawn.
- * 
+ *
  * @param start_sector  The sector number of the first sector to be marked as
  *                      read.
  * @param end_sector    The sector number at which to stop marking sectors as
@@ -361,7 +361,7 @@ void draw_percentage() {
  * Mark the given sector as "bad" in the sector map.  The block containing the
  * given sector is redrawn on the display.  The display is not refreshed after
  * the blocks are drawn.
- * 
+ *
  * @param sector_num  The sector number of the sector to be marked as bad.
  */
 void mark_sector_bad(uint64_t sector_num) {
@@ -377,9 +377,9 @@ void mark_sector_bad(uint64_t sector_num) {
 
 /**
  * Determines whether the given sector is marked as "bad" in the sector map.
- * 
+ *
  * @param sector_num  The sector number of the sector to query.
- * 
+ *
  * @returns Non-zero if the sector has been marked as "bad" in the sector map,
  *          zero otherwise.
  */
@@ -578,7 +578,7 @@ void redraw_screen() {
 
 /**
  * Waits for the lock on the lockfile to be released.
- * 
+ *
  * @param topwin  A pointer to the pointer to the window currently being shown
  *                on the display.  The contents of the window will be saved,
  *                and the window will be destroyed and recreated after the
@@ -589,7 +589,7 @@ void wait_for_file_lock(WINDOW **topwin) {
     WINDOW *window;
     FILE *memfile;
     main_thread_status_type previous_status;
-    
+
     if(is_lockfile_locked()) {
         previous_status = main_thread_status;
         main_thread_status = MAIN_THREAD_STATUS_PAUSED;
@@ -647,11 +647,11 @@ void wait_for_file_lock(WINDOW **topwin) {
 
 /**
  * Profiles the system's random number generator.
- * 
+ *
  * The profile is run by generating random numbers for RNG_PROFILE_SECS
  * seconds and counting the number of random() calls that can be completed in
  * that time.
- * 
+ *
  * @returns The number of bytes per second the system is capable of generating.
  */
 double profile_random_number_generator() {
@@ -844,7 +844,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
     for(i = 1; i < (num_slices - 1); i++) {
         initial_sectors[i] = low + ((rng_get_random_number() & RAND_MAX) % (high - low));
         low = (num_sectors / (num_slices - 1)) * i;
-        
+
         if((initial_sectors[i] + (slice_size / device_stats.sector_size)) > low) {
             low = initial_sectors[i] + (slice_size / device_stats.sector_size);
         }
@@ -871,7 +871,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
             log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(errnum));
             io_error_during_size_probe();
 
-            return 0;            
+            return 0;
         }
 
         if(write_data_to_device(fd, buf + ((i - 1) * slice_size), slice_size, optimal_block_size)) {
@@ -1088,7 +1088,7 @@ uint64_t probe_device_size(int fd, uint64_t num_sectors, uint64_t optimal_block_
 
 int *random_list() {
     int i, j, k, l, source[16], temp[16], *list;
-    
+
     assert(list = malloc(sizeof(int) * 16));
 
     // Initialize the source list
@@ -1117,9 +1117,9 @@ int *random_list() {
 
 /**
  * Get the starting sector for a slice.
- * 
+ *
  * @param slice_num  The slice for which to get the starting sector.
- * 
+ *
  * @returns The sector on which the slice starts.
 */
 uint64_t get_slice_start(int slice_num) {
@@ -1206,7 +1206,7 @@ void print_device_summary(int64_t fifty_percent_failure_round, int64_t rounds_co
 
 /**
  * Initializes curses and sets up the color pairs that we frequently use.
- * 
+ *
  * @returns -1 if the screen is too small to hold the UI, 0 otherwise.
  */
 int screen_setup() {
@@ -1241,7 +1241,7 @@ int screen_setup() {
 
 /**
  * Print the help.
- * 
+ *
  * @param program_name  The name of the program, as specified on the command
  *                      line.  The caller should set this to the value of
  *                      argv[0].
@@ -1306,18 +1306,18 @@ void print_help(char *program_name) {
  * Parse the command line arguments.  Parsed arguments are placed in the
  * program_options global struct.  If a particular option was not supplied on
  * the command line, it is set to its default value, which is:
- * 
+ *
  * * `NULL` for `-s`/`--stats-file` and `-l`/`--log-file`,
  * * `60` for `-i`/`--stats-interval`, and
  * * `0` for `-p`/`--probe` and `-n`/`--no-curses`.
- * 
+ *
  * @param argc  The number of arguments passed on the command line.  The caller
  *              should pass the unmodified value of `argc` that was supplied to
  *              `main()`.
  * @param argv  A pointer to an array of strings containing the command line
  *              arguments.  The caller should pass the unmodified value of
  *              `argv` that was supplied to `main()`.
- * 
+ *
  * @returns Zero if arguments were parsed successfully and the program should
  *          continue normally, or non-zero if the program should exit after
  *          this call completes (e.g., if -h was specified or if a required
