@@ -400,7 +400,7 @@ int compare_device_uuids(device_testing_context_type *device_testing_context, in
         }
 
         get_embedded_device_uuid(buffer, device_uuid);
-        if(!memcmp(device_uuid, device_testing_context->device_info.device_uuid, sizeof(uuid_t))) {
+        if(!uuid_compare(device_uuid, device_testing_context->device_info.device_uuid)) {
             if(++num_matching_sectors >= (num_sectors_to_check / 2)) {
                 free(buffer);
 
