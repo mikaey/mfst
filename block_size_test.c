@@ -30,10 +30,13 @@ static char msg_buffer[512];
  *
  * @param fd  The file descriptor of the device being measured.
  *
- * @returns The block size which the device was able to write the quickest, in
- *          bytes.
+ * @returns 0 if the test was successful, or -1 if the test failed.  On success,
+ *          device_testing_context->optimal_block_size_test_info.test_performed
+ *          is set to 1, and
+ *          device_testing_context->optimal_block_size_test_info.optimal_block_size
+ *          is set to the optimal block size, in bytes.
  */
-int probe_for_optimal_block_size(int fd) {
+int probe_for_optimal_block_size(device_testing_context_type *device_testing_context) {
     struct timeval start_time, end_time, cur_time, prev_time;
     int cur_pow; // Block size, expressed as 2^(cur_pow+9)
     uint64_t cur_block_size, total_bytes_written, cur_block_bytes_left, ret;
@@ -69,9 +72,9 @@ int probe_for_optimal_block_size(int fd) {
     };
 
     // Get a lock on the lockfile.
-    if(lock_lockfile()) {
+    if(lock_lockfile(device_testing_context)) {
         local_errno = errno;
-        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_LOCKFILE_ERROR);
+        log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_LOCKFILE_ERROR);
 
         snprintf(msg_buffer, sizeof(msg_buffer),
                  "Unable to obtain a lock on the lockfile.  For now, we'll "
@@ -80,27 +83,27 @@ int probe_for_optimal_block_size(int fd) {
                  "happens again, other tests may fail or lock up.\n\nThe error "
                  "we got was: %s", strerror(local_errno));
 
-        message_window(stdscr, ERROR_TITLE, msg_buffer, 1);
+        message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
         return -1;
     }
 
     // Don't bother testing below the device-specified optimal block size or
     // above the maximum number of sectors per request.
-    for(min = 0; (1 << (min + 9)) < device_stats.preferred_block_size && min <= 17; min++) {}
-    for(max = 17; (1 << (max + 9)) > device_stats.max_request_size && max > (min + 1); max--) {}
+    for(min = 0; (1 << (min + 9)) < (device_testing_context->device_info.max_sectors_per_request * device_testing_context->device_info.sector_size) && min <= 17; min++) {}
+    for(max = 17; (1 << (max + 9)) > (device_testing_context->device_info.max_sectors_per_request * device_testing_context->device_info.sector_size) && max > (min + 1); max--) {}
 
-    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_OPTIMAL_BLOCK_SIZE_TEST_STARTING);
-    window = message_window(stdscr, "Probing for optimal write block size",
+    log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_OPTIMAL_BLOCK_SIZE_TEST_STARTING);
+    window = message_window(device_testing_context, stdscr, "Probing for optimal write block size",
         "\n                                        ", // Make room for the progress bar
     0);
 
     if(local_errno = posix_memalign((void **) &buf, sysconf(_SC_PAGESIZE), buf_size)) {
-        unlock_lockfile();
-        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(local_errno));
-        log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_MEM_ALLOC_ERROR);
+        unlock_lockfile(device_testing_context);
+        log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(local_errno));
+        log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_MEM_ALLOC_ERROR);
 
         erase_and_delete_window(window);
-        message_window(stdscr, WARNING_TITLE,
+        message_window(device_testing_context, stdscr, WARNING_TITLE,
                        "We ran into an error while trying to allocate memory "
                        "for the optimal write block size test.  This could "
                        "mean your system is low on memory.  For now, we'll use "
@@ -130,8 +133,8 @@ int probe_for_optimal_block_size(int fd) {
         }
 
         // Generate random data (so that we know the device isn't caching it each time)
-        rng_init(end_time.tv_sec);
-        rng_fill_buffer(buf, buf_size);
+        rng_init(device_testing_context, end_time.tv_sec);
+        rng_fill_buffer(device_testing_context, buf, buf_size);
 
         assert(!gettimeofday(&start_time, NULL));
         prev_time = start_time;
@@ -140,17 +143,17 @@ int probe_for_optimal_block_size(int fd) {
         for(total_bytes_written = 0; total_bytes_written < buf_size; total_bytes_written += cur_block_size) {
             cur_block_bytes_left = cur_block_size;
             while(cur_block_bytes_left) {
-                ret = write(fd, buf + total_bytes_written + (cur_block_size - cur_block_bytes_left), cur_block_bytes_left);
+                ret = write(device_testing_context->device_info.fd, buf + total_bytes_written + (cur_block_size - cur_block_bytes_left), cur_block_bytes_left);
                 if(ret == -1) {
-                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR, strerror(errno));
+                    log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_WRITE_ERROR, strerror(errno));
 
                     free(buf);
-                    unlock_lockfile();
+                    unlock_lockfile(device_testing_context);
 
-                    log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_DEVICE_ERROR);
+                    log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_DEVICE_ERROR);
 
                     erase_and_delete_window(window);
-                    message_window(stdscr, WARNING_TITLE,
+                    message_window(device_testing_context, stdscr, WARNING_TITLE,
                                    "We ran into an error while trying to probe "
                                    "for the optimal write block size.  It "
                                    "could be that the device was removed, "
@@ -168,7 +171,7 @@ int probe_for_optimal_block_size(int fd) {
                 }
             }
 
-            handle_key_inputs(NULL);
+            handle_key_inputs(device_testing_context, NULL);
 
             cur_percent = ((total_bytes_written + cur_block_size) * 40) / buf_size;
             if(cur_percent != prev_percent) {
@@ -201,13 +204,13 @@ int probe_for_optimal_block_size(int fd) {
 
         assert(!gettimeofday(&end_time, NULL));
 
-        if(lseek(fd, 0, SEEK_SET) == -1) {
+        if(lseek(device_testing_context->device_info.fd, 0, SEEK_SET) == -1) {
             local_errno = errno;
-            unlock_lockfile();
+            unlock_lockfile(device_testing_context);
             free(buf);
 
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(local_errno));
-            log_log(NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_DEVICE_ERROR);
+            log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_LSEEK_ERROR, strerror(local_errno));
+            log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_OPTIMAL_BLOCK_SIZE_TEST_ABORTING_DEVICE_ERROR);
 
             erase_and_delete_window(window);
 
@@ -221,12 +224,12 @@ int probe_for_optimal_block_size(int fd) {
                      "tests are going to fail pretty quickly.\n\nThe error we "
                      "got was: %s", strerror(local_errno));
 
-            message_window(stdscr, WARNING_TITLE, msg_buffer, 1);
+            message_window(device_testing_context, stdscr, WARNING_TITLE, msg_buffer, 1);
             return -1;
         }
 
         rates[cur_pow] = buf_size / (((double) timediff(start_time, end_time)) / 1000000);
-        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_OPTIMAL_BLOCK_SIZE_TEST_INDIVIDUAL_RESULT, labels[cur_pow], format_rate(rates[cur_pow], rate_buffer, sizeof(rate_buffer)));
+        log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_OPTIMAL_BLOCK_SIZE_TEST_INDIVIDUAL_RESULT, labels[cur_pow], format_rate(rates[cur_pow], rate_buffer, sizeof(rate_buffer)));
 
         // After a certain point, the increase in speeds is trivial.
         // Therefore, we'll only accept higher speeds for bigger block sizes
@@ -237,13 +240,15 @@ int probe_for_optimal_block_size(int fd) {
         }
     }
 
-    unlock_lockfile();
+    unlock_lockfile(device_testing_context);
 
     free(buf);
     erase_and_delete_window(window);
 
-    log_log(NULL, SEVERITY_LEVEL_INFO, MSG_OPTIMAL_BLOCK_SIZE_TEST_COMPLETE, 1 << (highest_rate_pow + 9));
+    log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_OPTIMAL_BLOCK_SIZE_TEST_COMPLETE, 1 << (highest_rate_pow + 9));
+    device_testing_context->optimal_block_size_test_info.test_performed = 1;
+    device_testing_context->optimal_block_size_test_info.optimal_block_size = 1 << (highest_rate_pow + 9);
 
-    return 1 << (highest_rate_pow + 9);
+    return 0;
 }
 

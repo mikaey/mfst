@@ -4,52 +4,12 @@
 #include <libudev.h>
 #include <uuid/uuid.h>
 
+#include "device_testing_context.h"
+
 /**
  * A struct for providing search parameters for locating a device.
  */
 typedef struct _device_search_params_t {
-    /**
-     * The logical size of the device (e.g., the size of the device as reported
-     * by the device), in bytes.
-     */
-    size_t logical_device_size;
-
-    /**
-     * The expected physical size of the device (e.g., the actual usable area of
-     * the device), in bytes.
-     */
-    size_t physical_device_size;
-
-    /**
-     * A buffer containing the data expected to appear at the beginning of the
-     * device.  The buffer is expected to be at least as big as indicated by
-     * bod_mod_buffer_size.
-     */
-    char  *bod_buffer;
-
-    /**
-     * A buffer containing the data expected to appear in the middle of the
-     * device.  The buffer is expected to be at least as big as indicated by
-     * bod_mod_buffer_size.
-     */
-    char  *mod_buffer;
-
-    /**
-     * The size of bod_buffer and mod_buffer, in bytes.
-     */
-    size_t bod_mod_buffer_size;
-
-    /**
-     * The UUID that is expected to be embedded in each sector of the device,
-     * or NULL if the device is not expected to have an embedded UUID.
-     */
-    uuid_t expected_device_uuid;
-
-    /**
-     * The device's sector map.
-     */
-    char  *sector_map;
-
     /**
      * The preferred path to the device, or NULL if no device should be
      * preferred  If a device search matches multiple devices, and the device
@@ -59,7 +19,7 @@ typedef struct _device_search_params_t {
      * This parameter is only used by find_device().  It is ignored by
      * wait_for_device_reconnect().
      */
-    char  *preferred_dev_name;
+    char *preferred_dev_name;
 
     /**
      * Non-zero if the device search must match the device specified in
@@ -70,7 +30,7 @@ typedef struct _device_search_params_t {
      * This parameter is only used by find_device().  It is ignored by
      * wait_for_device_reconnect().
      */
-    int    must_match_preferred_dev_name;
+    int   must_match_preferred_dev_name;
 } device_search_params_t;
 
 /**
@@ -107,13 +67,13 @@ int did_device_disconnect(dev_t device_num);
 /**
  * Looks at all block devices for one that matches the geometry described in
  * device_search_params.  If it finds a single device that matches the given
- * criteria, it opens it and returns a device_search_result_t containing the
- * info on the device (which includes an open file handle to the device).
+ * criteria, it opens it and places the info on the new device (including a new
+ * file handle) into `device_testing_context`.
  *
- * If must_match_preferred_dev_name is set to 0, preferred dev_name can be used
- * to suggest the path to the device file.
- *  - If there is an ambiguity, preferred_dev_name will be used to resolve the
- *    ambiguity (if set).
+ * If `must_match_preferred_dev_name` is set to 0, preferred dev_name can be
+ * used to suggest the path to the device file.
+ *  - If there is an ambiguity, `preferred_dev_name` (if set) will be used to
+ *    resolve the ambiguity (if set).
  *  - If there is an ambiguity, but none of the discovered devices matches the
  *    one set in preferred_dev_name, this function will return an error.
  *  - If there is no ambiguity, preferred_dev_name will be ignored.
@@ -124,12 +84,13 @@ int did_device_disconnect(dev_t device_num);
  *  - If the specified device does not match the provided parameters, this
  *    function will return an error.
  *
- * @param device_search_params  A device_search_params_t containing information
- *                              on the device being searched for.
+ * @param device_testing_context  The device to locate.
+ * @param device_search_params    A device_search_params_t containing
+ *                                information on the device being searched for.
  *
- * @returns A pointer to a device_search_result_t containing the information on
- *          the matched device, or NULL if an error occurred.  In the event of
- *          an error, errno will be set to one of the following values:
+ * @returns 0 if the device was successfully located and opened, or -1
+ *          otherwise.  In the event of an error, errno will be set to one of
+ *          the following values:
  *          - EFAULT   device_search_params was set to NULL.
  *          - ENODEV   No devices were found that matched the given parameters.
  *          - ENOTUNIQ More than one device was found that matched the given
@@ -146,7 +107,7 @@ int did_device_disconnect(dev_t device_num);
  *          Note that the returned object should be freed by the caller using
  *          free_device_search_result() once finished.
  */
-device_search_result_t *find_device(device_search_params_t *device_search_params);
+int find_device(device_testing_context_type *device_testing_context, device_search_params_t *device_search_params);
 
 /**
  * Monitor for new block devices.  When a new block device is detected, compare
@@ -164,17 +125,17 @@ device_search_result_t *find_device(device_search_params_t *device_search_params
  *          - EINTR    An error occurred while calling strdup() to copy the name
  *                     of the found device.
  */
-device_search_result_t *wait_for_device_reconnect(device_search_params_t *device_search_params);
+device_search_result_t *wait_for_device_reconnect(device_testing_context_type *device_testing_context, device_search_params_t *device_search_params);
 
 /**
  * Determines whether the device described in device_num is a device that we
  * know how to reset.
  *
- * @param device_num  The device number of the device to be queried.
+ * @param device_testing_context  The device to be queried.
  *
  * @returns 1 if we know how to reset the device, or 0 if we don't.
  */
-int can_reset_device(dev_t device_num);
+int can_reset_device(device_testing_context_type *device_testing_context);
 
 /**
  * Resets the given device.
@@ -184,7 +145,7 @@ int can_reset_device(dev_t device_num);
  * @returns A new file handle to the device if the device was successfully
  *          reset, or -1 if it was not.
  */
-int reset_device(int device_fd);
+int reset_device(device_testing_context_type *device_testing_context);
 
 /**
  * Indicates whether the specified device is a block device.

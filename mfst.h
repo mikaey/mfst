@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 #include <uuid/uuid.h>
 
+#include "device_testing_context.h"
+
 #define VERSION "0.4"
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "
 
@@ -347,15 +349,21 @@
  *
  * This function is thread-safe.
  *
- * @param funcname  The name of the calling function.  May be NULL.  If not set
- *                  to NULL, it will be included in the message.
- * @param severity  The severity of the message to be logged.
- * @param msg       The message number (e.g., the index of the message to be
- *                  logged in the log_file_messages array).
- * @param ...       Parameters for any printf-style format specifiers that
- *                  appear in the message.
+ * @param device_testing_context  The device to which the message applies.
+ * @param funcname                The name of the calling function.  May be
+ *                                NULL.  If not set to NULL, it will be included
+ *                                in the message.
+ * @param severity                The severity of the message to be logged.
+ *                                Right now, the severity is just included with
+ *                                the log message; in future versions, a command
+ *                                line option will be introduced to allow
+ *                                filtering of log messages based on severity.
+ * @param msg                     The message number (e.g., the index of the
+ *                                message in the log_file_messages array).
+ * @param ...                     Parameters for any printf-style format
+ *                                specifiers that appear in the message.
  */
-void log_log(const char *funcname, int severity, int msg, ...);
+void log_log(device_testing_context_type *device_testing_context, const char *funcname, int severity, int msg, ...);
 
 /**
  * Redraws the entire screen.  Useful on initial setup or when the screen has
@@ -375,7 +383,7 @@ void redraw_screen();
  * @returns The maximum number of contiguous sectors that can be written
  *          starting from starting_sector (which may be 0).
  */
-uint64_t get_max_writable_sectors(uint64_t starting_sector, uint64_t max_sectors);
+uint64_t get_max_writable_sectors(device_testing_context_type *device_testing_context, uint64_t starting_sector, uint64_t max_sectors);
 
 /**
  * Returns the maximum number of contiguous sectors that have been marked as
@@ -384,7 +392,7 @@ uint64_t get_max_writable_sectors(uint64_t starting_sector, uint64_t max_sectors
  * resulted in I/O errors that were not resolved by the program's various retry
  * mechanisms.
  */
-uint64_t get_max_unwritable_sectors(uint64_t starting_sector, uint64_t max_sectors);
+uint64_t get_max_unwritable_sectors(device_testing_context_type *device_testing_context, uint64_t starting_sector, uint64_t max_sectors);
 
 /**
  * Decodes the UUID embedded in the sector data (specified by data) and places
@@ -421,44 +429,8 @@ typedef struct _program_options_type {
 
 extern program_options_type program_options;
 
-typedef enum {
-    FAKE_FLASH_UNKNOWN,
-    FAKE_FLASH_YES,
-    FAKE_FLASH_NO
-} FakeFlashEnum;
-
-// Global variables
-typedef struct _device_stats_type {
-    uint64_t num_sectors;
-    uint64_t num_bad_sectors;
-    uint64_t bytes_since_last_status_update;
-    uint64_t reported_size_bytes;
-    uint64_t detected_size_bytes;
-    uint64_t middle_of_device;
-    int sector_size;
-    unsigned int physical_sector_size;
-    int preferred_block_size;
-    int block_size;
-    int max_request_size;
-    dev_t device_num;
-    FakeFlashEnum is_fake_flash;
-    uuid_t device_uuid;
-} device_stats_type;
-
-extern device_stats_type device_stats;
-
-typedef struct _device_speeds_type {
-    double sequential_write_speed;
-    double sequential_read_speed;
-    double random_write_iops;
-    double random_read_iops;
-} device_speeds_type;
-
-extern device_speeds_type device_speeds;
-
 typedef struct _sector_display_type {
     uint64_t sectors_per_block;
-    char *sector_map;
     uint64_t sectors_in_last_block;
     uint64_t num_blocks;
     uint64_t num_lines;
@@ -466,30 +438,6 @@ typedef struct _sector_display_type {
 } sector_display_type;
 
 extern sector_display_type sector_display;
-
-// To handle device disconnects/reconnects, we're going to create a couple of
-// buffers where we hold the most recent 1MB of data that we wrote to the
-// beginning of the device (BOD) and middle of the device (MOD).  When a device
-// is reconnected, we'll read back those two segments.  One segment needs to be
-// a 100% match; we can be fuzzy about how much of the other segment matches.
-// I'm taking this approach in case we were in the middle of writing to one of
-// these two segments when the device was disconnected and we're not sure how
-// much of the data was actually committed (e.g., actually made it out of the
-// device's write cache and into permanent storage).
-extern char bod_buffer[BOD_MOD_BUFFER_SIZE];
-extern char mod_buffer[BOD_MOD_BUFFER_SIZE];
-
-extern volatile int64_t num_rounds;
-
-typedef struct _state_data_type {
-    volatile uint64_t bytes_read;
-    volatile uint64_t bytes_written;
-    int64_t first_failure_round;
-    int64_t ten_percent_failure_round;
-    int64_t twenty_five_percent_failure_round;
-} state_data_type;
-
-extern state_data_type state_data;
 
 typedef enum {
               MAIN_THREAD_STATUS_IDLE                = 0, // Status hasn't been set yet

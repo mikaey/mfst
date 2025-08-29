@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "device_testing_context.h"
 #include "mfst.h"
 #include "ncurses.h"
 
@@ -105,7 +106,7 @@ char **wordwrap(char *str, int max_line_length, int *string_count) {
     return output;
 }
 
-WINDOW *message_window(WINDOW *parent, const char *title, char *msg, char wait) {
+WINDOW *message_window(device_testing_context_type *device_testing_context, WINDOW *parent, const char *title, char *msg, char wait) {
     WINDOW *window;
     int lines, len, longest, i;
     char **split;
@@ -181,7 +182,7 @@ WINDOW *message_window(WINDOW *parent, const char *title, char *msg, char wait) 
     wrefresh(window);
 
     if(wait) {
-        while(handle_key_inputs(window) != '\r') {
+        while(handle_key_inputs(device_testing_context, window) != '\r') {
             napms(100);
         }
         erase_and_delete_window(window);
@@ -191,7 +192,7 @@ WINDOW *message_window(WINDOW *parent, const char *title, char *msg, char wait) 
     }
 }
 
-int handle_key_inputs(WINDOW *curwin) {
+int handle_key_inputs(device_testing_context_type *device_testing_context, WINDOW *curwin) {
     int key, width, height;
 
     if(curwin) {
@@ -207,7 +208,7 @@ int handle_key_inputs(WINDOW *curwin) {
         }
 
         clear();
-        redraw_screen();
+        redraw_screen(device_testing_context);
 
         if(curwin) {
             touchwin(curwin);

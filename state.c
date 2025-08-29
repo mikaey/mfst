@@ -13,6 +13,7 @@
 #include "base64.h"
 #include "messages.h"
 #include "mfst.h"
+#include "state.h"
 
 /**
  * Tests to see if the given JSON pointer exists in the specified object.
@@ -31,7 +32,7 @@ int test_json_pointer(struct json_object *obj, const char *path) {
     return ret;
 }
 
-int save_state() {
+int save_state(device_testing_context_type *device_testing_context) {
     struct json_object *root, *parent, *obj;
     char *filename;
     char *sector_map, *b64str;
@@ -58,7 +59,7 @@ int save_state() {
     }
 
     // Write the device UUID out to the file
-    uuid_unparse(device_stats.device_uuid, device_uuid);
+    uuid_unparse(device_testing_context->device_info.device_uuid, device_uuid);
     obj = json_object_new_string(device_uuid);
     if(json_object_object_add(root, "device_uuid", obj)) {
         json_object_put(obj);
@@ -69,7 +70,7 @@ int save_state() {
     // Put together the device_geomery object
     parent = json_object_new_object();
 
-    obj = json_object_new_uint64(device_stats.reported_size_bytes);
+    obj = json_object_new_uint64(device_testing_context->device_info.logical_size);
     if(json_object_object_add(parent, "reported_size", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -77,7 +78,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_uint64(device_stats.detected_size_bytes);
+    obj = json_object_new_uint64(device_testing_context->device_info.physical_size);
     if(json_object_object_add(parent, "detected_size", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -85,7 +86,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_int(device_stats.sector_size);
+    obj = json_object_new_int(device_testing_context->device_info.sector_size);
     if(json_object_object_add(parent, "sector_size", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -102,7 +103,7 @@ int save_state() {
     // Put together the device_info object
     parent = json_object_new_object();
 
-    obj = json_object_new_int(device_stats.block_size);
+    obj = json_object_new_int(device_testing_context->device_info.optimal_block_size);
     if(json_object_object_add(parent, "block_size", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -110,7 +111,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_double(device_speeds.sequential_read_speed);
+    obj = json_object_new_double(device_testing_context->performance_test_info.sequential_read_speed);
     if(json_object_object_add(parent, "sequential_read_speed", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -118,7 +119,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_double(device_speeds.sequential_write_speed);
+    obj = json_object_new_double(device_testing_context->performance_test_info.sequential_write_speed);
     if(json_object_object_add(parent, "sequential_write_speed", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -126,7 +127,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_double(device_speeds.random_read_iops);
+    obj = json_object_new_double(device_testing_context->performance_test_info.random_read_iops);
     if(json_object_object_add(parent, "random_read_iops", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -134,7 +135,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_double(device_speeds.random_write_iops);
+    obj = json_object_new_double(device_testing_context->performance_test_info.random_write_iops);
     if(json_object_object_add(parent, "random_write_iops", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -241,19 +242,19 @@ int save_state() {
     // represent 4 sectors, with the first sector being in the two most
     // significant bits and the last sector being in the least two significant
     // bits.
-    sector_map = (char *) malloc((device_stats.num_sectors / 4) + ((device_stats.num_sectors % 4) ? 1 : 0));
-    for(i = 0; i < device_stats.num_sectors; i += 4) {
+    sector_map = (char *) malloc((device_testing_context->device_info.num_physical_sectors / 4) + ((device_testing_context->device_info.num_physical_sectors % 4) ? 1 : 0));
+    for(i = 0; i < device_testing_context->device_info.num_physical_sectors; i += 4) {
         sector_map[i / 4] = 0;
         for(j = 0; j < 4; j++) {
-            if((i + j) < device_stats.num_sectors) {
-                sector_map[i / 4] = (sector_map[i / 4] << 2) | ((sector_display.sector_map[i + j] & 0x10) >> 3) | (sector_display.sector_map[i + j] & 0x01);
+            if((i + j) < device_testing_context->device_info.num_physical_sectors) {
+                sector_map[i / 4] = (sector_map[i / 4] << 2) | ((device_testing_context->endurance_test_info.sector_map[i + j] & 0x10) >> 3) | (device_testing_context->endurance_test_info.sector_map[i + j] & 0x01);
             } else {
                 sector_map[i / 4] <<= 2;
             }
         }
     }
 
-    b64str = base64_encode(sector_map, (device_stats.num_sectors / 4) + ((device_stats.num_sectors % 4) ? 1 : 0), NULL);
+    b64str = base64_encode(sector_map, (device_testing_context->device_info.num_physical_sectors / 4) + ((device_testing_context->device_info.num_physical_sectors % 4) ? 1 : 0), NULL);
     free(sector_map);
 
     if(!b64str) {
@@ -273,7 +274,7 @@ int save_state() {
     }
 
     // Save the beginning-of-device and middle-of-device data.
-    if(!(b64str = base64_encode(bod_buffer, sizeof(bod_buffer), NULL))) {
+    if(!(b64str = base64_encode(device_testing_context->device_info.bod_buffer, device_testing_context->device_info.bod_mod_buffer_size, NULL))) {
         json_object_put(parent);
         json_object_put(root);
         return -1;
@@ -289,7 +290,7 @@ int save_state() {
         return -1;
     }
 
-    if(!(b64str = base64_encode(mod_buffer, sizeof(mod_buffer), NULL))) {
+    if(!(b64str = base64_encode(device_testing_context->device_info.mod_buffer, device_testing_context->device_info.bod_mod_buffer_size, NULL))) {
         json_object_put(parent);
         json_object_put(root);
         return -1;
@@ -305,7 +306,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_int64(num_rounds);
+    obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_completed);
     if(json_object_object_add(parent, "rounds_completed", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -313,7 +314,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_uint64(state_data.bytes_read);
+    obj = json_object_new_uint64(device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read);
     if(json_object_object_add(parent, "bytes_read", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -321,7 +322,7 @@ int save_state() {
         return -1;
     }
 
-    obj = json_object_new_uint64(state_data.bytes_written);
+    obj = json_object_new_uint64(device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written);
     if(json_object_object_add(parent, "bytes_written", obj)) {
         json_object_put(obj);
         json_object_put(parent);
@@ -329,8 +330,8 @@ int save_state() {
         return -1;
     }
 
-    if(state_data.first_failure_round != -1) {
-        obj = json_object_new_int64(state_data.first_failure_round);
+    if(device_testing_context->endurance_test_info.rounds_to_first_error != -1ULL) {
+        obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_to_first_error);
         if(json_object_object_add(parent, "first_failure_round", obj)) {
             json_object_put(obj);
             json_object_put(parent);
@@ -339,8 +340,8 @@ int save_state() {
         }
     }
 
-    if(state_data.ten_percent_failure_round != -1) {
-        obj = json_object_new_int64(state_data.ten_percent_failure_round);
+    if(device_testing_context->endurance_test_info.rounds_to_10_threshold != -1ULL) {
+        obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_to_10_threshold);
         if(json_object_object_add(parent, "ten_percent_failure_round", obj)) {
             json_object_put(obj);
             json_object_put(parent);
@@ -349,8 +350,8 @@ int save_state() {
         }
     }
 
-    if(state_data.twenty_five_percent_failure_round != -1) {
-        obj = json_object_new_int64(state_data.twenty_five_percent_failure_round);
+    if(device_testing_context->endurance_test_info.rounds_to_25_threshold != -1ULL) {
+        obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_to_25_threshold);
         if(json_object_object_add(parent, "twenty_five_percent_failure_round", obj)) {
             json_object_put(obj);
             json_object_put(parent);
@@ -389,7 +390,7 @@ int save_state() {
     return 0;
 }
 
-int load_state() {
+int load_state(device_testing_context_type *device_testing_context) {
     struct stat statbuf;
     struct json_object *root, *obj;
     int i, version = 1;
@@ -595,28 +596,28 @@ int load_state() {
     void *destinations[] = {
         &version,
         &uuid_str,
-        &device_stats.reported_size_bytes,
-        &device_stats.detected_size_bytes,
-        &device_stats.sector_size,
-        &device_stats.block_size,
-        &device_speeds.sequential_read_speed,
-        &device_speeds.sequential_write_speed,
-        &device_speeds.random_read_iops,
-        &device_speeds.random_write_iops,
+        &device_testing_context->device_info.logical_size,
+        &device_testing_context->device_info.physical_size,
+        &device_testing_context->device_info.sector_size,
+        &device_testing_context->device_info.optimal_block_size,
+        &device_testing_context->performance_test_info.sequential_read_speed,
+        &device_testing_context->performance_test_info.sequential_write_speed,
+        &device_testing_context->performance_test_info.random_read_iops,
+        &device_testing_context->performance_test_info.random_write_iops,
         &program_options.no_curses,
         &program_options.stats_file,
         &program_options.log_file,
         &program_options.lock_file,
         &program_options.stats_interval,
-        &sector_display.sector_map,
-        bod_buffer,
-        mod_buffer,
+        &device_testing_context->endurance_test_info.sector_map,
+        device_testing_context->device_info.bod_buffer,
+        device_testing_context->device_info.mod_buffer,
         &tmp_num_rounds,
         &tmp_bytes_read,
         &tmp_bytes_written,
-        &state_data.first_failure_round,
-        &state_data.ten_percent_failure_round,
-        &state_data.twenty_five_percent_failure_round
+        &device_testing_context->endurance_test_info.rounds_to_first_error,
+        &device_testing_context->endurance_test_info.rounds_to_10_threshold,
+        &device_testing_context->endurance_test_info.rounds_to_25_threshold
     };
 
     void free_buffers() {
@@ -636,16 +637,16 @@ int load_state() {
 
     if(stat(program_options.state_file, &statbuf) == -1) {
         if(errno == ENOENT) {
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STATE_FILE_MISSING);
+            log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_STATE_FILE_MISSING);
             return LOAD_STATE_FILE_DOES_NOT_EXIST;
         } else {
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STAT_ERROR, strerror(errno));
+            log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_STAT_ERROR, strerror(errno));
             return LOAD_STATE_LOAD_ERROR;
         }
     }
 
     if(!(root = json_object_from_file(program_options.state_file))) {
-        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STATE_FILE_JSON_LOAD_ERROR, json_util_get_last_err());
+        log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_STATE_FILE_JSON_LOAD_ERROR, json_util_get_last_err());
         return LOAD_STATE_LOAD_ERROR;
     }
 
@@ -653,7 +654,7 @@ int load_state() {
     for(i = 0; all_props[i]; i++) {
         // Make sure required properties are present in the file.
         if(required_props[i] && test_json_pointer(root, all_props[i])) {
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_REQUIRED_PROPERTY_MISSING, all_props[i]);
+            log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_REQUIRED_PROPERTY_MISSING, all_props[i]);
             json_object_put(root);
             return LOAD_STATE_LOAD_ERROR;
         }
@@ -667,7 +668,7 @@ int load_state() {
 
             if((prop_types[i] == json_type_double && json_object_get_type(obj) != json_type_int && json_object_get_type(obj) != json_type_double) ||
                 (prop_types[i] != json_type_double && json_object_get_type(obj) != prop_types[i])) {
-                log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_HAS_WRONG_DATA_TYPE, all_props[i]);
+                log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_HAS_WRONG_DATA_TYPE, all_props[i]);
                 free_buffers();
 
                 return LOAD_STATE_LOAD_ERROR;
@@ -677,14 +678,14 @@ int load_state() {
             // than 0 characters in length
             if(prop_types[i] == json_type_int) {
                 if(json_object_get_uint64(obj) == 0) {
-                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_UNPARSEABLE_OR_ZERO, all_props[i]);
+                    log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_UNPARSEABLE_OR_ZERO, all_props[i]);
 
                     free_buffers();
                     return LOAD_STATE_LOAD_ERROR;
                 }
             } else if(prop_types[i] == json_type_double) {
                 if(json_object_get_double(obj) <= 0) {
-                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_UNPARSEABLE_OR_ZERO, all_props[i]);
+                    log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_PROPERTY_UNPARSEABLE_OR_ZERO, all_props[i]);
 
                     free_buffers();
                     return LOAD_STATE_LOAD_ERROR;
@@ -692,7 +693,7 @@ int load_state() {
             } else if(prop_types[i] == json_type_string) {
                 // Go ahead and copy it over to a buffer
                 if(!(buffers[i] = strdup(json_object_get_string(obj)))) {
-                    log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
+                    log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_STRDUP_ERROR, strerror(errno));
 
                     free_buffers();
                     return LOAD_STATE_LOAD_ERROR;
@@ -702,7 +703,7 @@ int load_state() {
                     // Base64-decode it and put that into buffers[i] instead
                     buffer = base64_decode(buffers[i], json_object_get_string_len(obj), &buffer_lens[i]);
                     if(!buffer) {
-                        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_UNABLE_TO_BASE64_DECODE, all_props[i]);
+                        log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_UNABLE_TO_BASE64_DECODE, all_props[i]);
 
                         free_buffers();
                         return LOAD_STATE_LOAD_ERROR;
@@ -754,7 +755,7 @@ int load_state() {
 
     for(i = 0; all_props[i]; i++) {
         if(base64_props[i] && (buffer_lens[i] != expected_lens[i])) {
-            log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_WRONG_NUMBER_OF_BYTES, all_props[i], expected_lens[i], buffer_lens[i]);
+            log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_REJECTING_STATE_FILE_WRONG_NUMBER_OF_BYTES, all_props[i], expected_lens[i], buffer_lens[i]);
 
             free_buffers();
             return LOAD_STATE_LOAD_ERROR;
@@ -762,8 +763,8 @@ int load_state() {
     }
 
     // Allocate memory for the sector map, which we'll need to unpack later
-    if(!(sector_display.sector_map = malloc(detected_size / sector_size))) {
-        log_log(__func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
+    if(!(device_testing_context->endurance_test_info.sector_map = malloc(detected_size / sector_size))) {
+        log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MALLOC_ERROR, strerror(errno));
 
         free_buffers();
         return LOAD_STATE_LOAD_ERROR;
@@ -796,8 +797,8 @@ int load_state() {
         } else if(prop_types[i] == json_type_boolean) {
             *((char *) destinations[i]) = json_object_get_boolean(obj);
         } else if(prop_types[i] == json_type_string) {
-            // bod_buffer and mod_buffer have to handled specially because
-            // we have statically allocated buffers for them
+            // bod_buffer and mod_buffer have to handled specially because we
+            // allocated memory for them in new_device_testing_context()
             if(all_props[i] == bod_data_ptr || all_props[i] == mod_data_ptr) {
                 memcpy(destinations[i], buffers[i], BOD_MOD_BUFFER_SIZE);
                 free(buffers[i]);
@@ -807,7 +808,7 @@ int load_state() {
                     for(k = 0; k < buffer_lens[i]; k++) {
                         for(l = 0; l < 4; l++) {
                             if((k + l) < buffer_lens[i]) {
-                                sector_display.sector_map[(k * 4) + l] = (((buffers[i][k] >> (((3 - l) * 2) + 1)) & 0x01) << 3) | ((buffers[i][k] >> ((3 - l) * 2)) & 0x01);
+                                device_testing_context->endurance_test_info.sector_map[(k * 4) + l] = (((buffers[i][k] >> (((3 - l) * 2) + 1)) & 0x01) << 3) | ((buffers[i][k] >> ((3 - l) * 2)) & 0x01);
                             }
                         }
                     }
@@ -815,7 +816,7 @@ int load_state() {
                     for(k = 0; k < buffer_lens[i]; k++) {
                         for(l = 0; l < 8; l++) {
                             if((k + l) < buffer_lens[i]) {
-                                sector_display.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
+                                device_testing_context->endurance_test_info.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
                             }
                         }
                     }
@@ -830,13 +831,13 @@ int load_state() {
 
     // Parse the device UUID
     if(uuid_str) {
-        uuid_parse(uuid_str, device_stats.device_uuid);
+        uuid_parse(uuid_str, device_testing_context->device_info.device_uuid);
         free(uuid_str);
     }
 
-    num_rounds = tmp_num_rounds;
-    state_data.bytes_read = tmp_bytes_read;
-    state_data.bytes_written = tmp_bytes_written;
+    device_testing_context->endurance_test_info.rounds_completed = tmp_num_rounds;
+    device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read = tmp_bytes_read;
+    device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written = tmp_bytes_written;
 
     json_object_put(root);
     return LOAD_STATE_SUCCESS;

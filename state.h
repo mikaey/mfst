@@ -1,6 +1,8 @@
 #if !defined(STATE_H)
 #define STATE_H
 
+#include "device_testing_context.h"
+
 /**
  * Saves the program state to the file named in program_options.state_file.
  *
@@ -8,7 +10,7 @@
  *          program_options.state_file is NULL.  Returns -1 if an error
  *          occurred.
 */
-int save_state();
+int save_state(device_testing_context_type *device_testing_context);
 
 /**
  * Loads the program state from the file named in program_options.state_file.
@@ -21,6 +23,6 @@ int save_state();
  *          exist, or
  *          LOAD_STATE_LOAD_ERROR if an error occurred.
  */
-int load_state();
+int load_state(device_testing_context_type *device_testing_context);
 
 #endif // !defined(STATE_H)

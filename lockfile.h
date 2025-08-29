@@ -1,6 +1,8 @@
 #if !defined(LOCKFILE_H)
 #define LOCKFILE_H
 
+#include "device_testing_context.h"
+
 /**
  * Opens the given lockfile.
  *
@@ -8,7 +10,7 @@
  *
  * @returns Zero on success, or the contents of errno if an error occurred.
  */
-int open_lockfile(char *filename);
+int open_lockfile(device_testing_context_type *device_testing_context, char *filename);
 
 /**
  * Test to see if the lockfile is locked.
@@ -23,7 +25,7 @@ int is_lockfile_locked();
  * @returns Zero if the lockfile was locked successfully, or non-zero if it was
  *          not.
  */
-int lock_lockfile();
+int lock_lockfile(device_testing_context_type *device_testing_context);
 
 /**
  * Unlocks the lockfile.
@@ -31,7 +33,7 @@ int lock_lockfile();
  * @returns Zero if the lockfile was unlocked successfully, or non-zero if it
  *          was not.
  */
-int unlock_lockfile();
+int unlock_lockfile(device_testing_context_type *device_testing_context);
 
 /**
  * Closes the lockfile.

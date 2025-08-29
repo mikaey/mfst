@@ -3,6 +3,8 @@
 
 #include <inttypes.h>
 
+#include "device_testing_context.h"
+
 typedef enum {
               SQL_THREAD_NOT_CONNECTED = 0, // No attempt to connect has been made
               SQL_THREAD_CONNECTING,
@@ -19,6 +21,7 @@ typedef struct _sql_thread_params_type {
     int mysql_port;
     char *mysql_db_name;
     char *card_name;
+    device_testing_context_type *device_testing_context;
     uint64_t card_id;
 } sql_thread_params_type;
 
