@@ -1495,7 +1495,9 @@ int64_t lseek_or_reset_device(device_testing_context_type *device_testing_contex
 
                 ret = lseek_or_retry(device_testing_context, position, device_was_disconnected);
 
-                *device_was_disconnected = 1;
+                if(device_was_disconnected) {
+                    *device_was_disconnected = 1;
+                }
 
                 erase_and_delete_window(window);
                 redraw_screen(device_testing_context);
