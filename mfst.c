@@ -123,7 +123,8 @@ void log_log(device_testing_context_type *device_testing_context, const char *fu
  *   test, if this is the first row -- note that sectors which failed
  *   verification during a previous round of testing are not included in this
  *   number)
- * * The rate at which sectors are failing verification (in counts/minut) --
+ * * The total number of bad sectors discovered on the device
+ * * The rate at which sectors are failing verification (in counts/minute) --
  *   note that sectors which failed verification during a previous round of
  *   testing are not accounted for in this number)
  *
@@ -751,6 +752,22 @@ void print_status_update(device_testing_context_type *device_testing_context) {
     assert(!gettimeofday(&device_testing_context->endurance_test_info.screen_counters.last_update_time, NULL));
 }
 
+/**
+ * Writes the given data to the device.  Data is copied to a page-aligned
+ * buffer, then written in chunks that correspond to the device's optimal block
+ * size (as specified in device_testing_context->device_info.optimal_block_size)
+ * or the number of bytes remaining, whichever is smaller.  This function is
+ * used primarily for the device size test; it does not gracefully handle device
+ * disconnects/reconnects.
+ *
+ * @param device_testing_context  The device to which to write the data.
+ * @param buf                     A pointer to the buffer containing the data to
+ *                                be written.
+ * @param len                     The number of bytes to be written.
+ *
+ * @returns 0 if the operation completed successfully, or -1 if it did not.  On
+ *          error, errno is set to the underlying error.
+ */
 int write_data_to_device(device_testing_context_type *device_testing_context, void *buf, uint64_t len) {
     uint64_t block_size, bytes_left, block_bytes_left;
     char *aligned_buf;
@@ -787,6 +804,15 @@ int write_data_to_device(device_testing_context_type *device_testing_context, vo
     return 0;
 }
 
+/**
+ * Displays a dialog to the user indicating that the device size test
+ * encountered an I/O error.  This function blocks until the user dismisses the
+ * dialog.
+ *
+ * @param device_testing_context  The current device being tested.  (This is
+ *                                needed in case the display needs to be redrawn
+ *                                while the dialog is being shown to the user.)
+ */
 void io_error_during_size_probe(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_DEVICE_SIZE_TEST_DUE_TO_IO_ERROR);
 
@@ -799,6 +825,16 @@ void io_error_during_size_probe(device_testing_context_type *device_testing_cont
                    "remainder of the tests are going to fail pretty quickly.", 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that the device size test
+ * encountered a memory allocation error.  This function blocks until the user
+ * dismisses the dialog.
+ *
+ * @param device_testing_context  The current device being tested.  (This is
+ *                                needed in case the display needs to be redrawn
+ *                                while the dialog is being shown to the user.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void memory_error_during_size_probe(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, "probe_device_size", SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(errnum));
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_ABORTING_DEVICE_SIZE_TEST_DUE_TO_MEMORY_ERROR);
@@ -811,9 +847,26 @@ void memory_error_during_size_probe(device_testing_context_type *device_testing_
                    "fail pretty quickly.", 1);
 }
 
-// This whole method assumes that no card is going to have a 16MB (or bigger)
-// cache.  If it turns out that there are cards that do have bigger caches,
-// then we might need to come back and revisit this.
+/**
+ * Executes the device capacity test.
+ *
+ * NOTE: This test works by writing 32MB of data to the card, then going back
+ *       and verifying the first 16MB of that data.  The idea is that if a
+ *       device is caching writes, and you make a write that is at least twice
+ *       the size of the write cache, the first half of the write should be
+ *       flushed out to the device's cold storage.  Of course, this assumes a
+ *       couple of things: (1) that no device is going to have a cache size of
+ *       more than 16MB; and (2) that the device flushes the cache in a
+ *       first-in, first-out fashion.  If either of those ever turn out not to
+ *       be true, we may have to come back and revisit our approach.
+ *
+ * On success, device_testing_context->capacity_test_info is populated with
+ * information on the detected capacity of the device.
+ *
+ * @param device_testing_context  The device to be tested.
+ *
+ * @returns 0 if the test completed successfully, or -1 if an error occurred.
+ */
 uint64_t probe_device_size(device_testing_context_type *device_testing_context) {
     // Start out by writing to 9 different places on the card to minimize the
     // chances that the card is interspersed with good blocks.
@@ -1174,6 +1227,14 @@ uint64_t get_slice_start(device_testing_context_type *device_testing_context, in
     return (device_testing_context->device_info.num_physical_sectors / NUM_SLICES) * slice_num;
 }
 
+/**
+ * Displays the end-of-test summary and shows it on screen/writes it out to the
+ * log file.
+ *
+ * @param device_testing_context  The device to be summarized.
+ * @param abort_reason            The reason that the test was aborted.
+ */
+
 void print_device_summary(device_testing_context_type *device_testing_context, int abort_reason) {
     char messages[9][384];
     char *out_messages[9];
@@ -1275,8 +1336,7 @@ int screen_setup() {
  * Print the help.
  *
  * @param program_name  The name of the program, as specified on the command
- *                      line.  The caller should set this to the value of
- *                      argv[0].
+ *                      line.  The caller should set this to argv[0].
  */
 void print_help(char *program_name) {
     printf("Usage: %s [ [-s | --stats-file filename] [-i | --stats-interval seconds]\n", program_name);
@@ -1503,6 +1563,23 @@ WINDOW *resetting_device_message() {
 
 int64_t lseek_or_reset_device(device_testing_context_type *device_testing_context, off_t position, int *device_was_disconnected);
 
+/**
+ * Displays a message to the user indicating that the device has been
+ * disconnected and waits for the device to be reconnected.
+ *
+ * @param device_testing_context  The device currently being tested.
+ * @param position                The position to seek to once the device has
+ *                                been reconnected.  If `seek_after_reconnect`
+ *                                is set to zero, this parameter is ignored.
+ * @param seek_after_reconnect    Non-zero to indicate that a seek operation, to
+ *                                the position indicated by `position`, should
+ *                                be performed after the device has been
+ *                                reconnected, or zero to indicate that no seek
+ *                                operation should be performed.
+ *
+ * @returns 0 if the device was reconnected successfully, or -1 if an error
+ *          occurred.
+ */
 int handle_device_disconnect(device_testing_context_type *device_testing_context, off_t position, int seek_after_reconnect) {
     WINDOW *window;
     char *new_device_name;
@@ -1817,6 +1894,29 @@ int64_t read_or_reset_device(device_testing_context_type *device_testing_context
     return ret;
 }
 
+/**
+ * Writes to the given device.  Gracefully handles device errors and disconnects
+ * by retrying the operation or, if the device has been disconnected, waiting
+ * for the device to reconnect.
+ *
+ * @param device_testing_context   The device to which to write.
+ * @param buf                      A pointer to a buffer containing the data to
+ *                                 be written to the device.
+ * @param count                    The number of bytes to write to the device.
+ * @param position                 The current position of the file pointer in
+ *                                 the device.  If the device is disconnected
+ *                                 or needs to be reset, a seek operation to the
+ *                                 given position is performed after the device
+ *                                 reconnects.
+ * @param device_was_disconnected  A pointer to a variable which will be set to
+ *                                 1 if the device was disconnected during the
+ *                                 course of this function, or left unmodified
+ *                                 otherwise.
+ *
+ * @returns The number of bytes written to the device, or -1 if (a) an
+ *          unrecoverable error occurred, or (b) an error occurred and retry
+ *          attempts have been exhausted.
+ */
 int64_t write_or_retry(device_testing_context_type *device_testing_context, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
     int retry_count = 0;
     WINDOW *window;
@@ -1855,6 +1955,29 @@ int64_t write_or_retry(device_testing_context_type *device_testing_context, void
     return ret;
 }
 
+/**
+ * Writes to the given device.  Gracefully handles device errors and disconnects
+ * by retrying the operation, attempting to reset the device, and/or waiting for
+ * the device to reconnect.
+ *
+ * @param device_testing_context  The device to which to write.
+ * @param buf                     A pointer to a buffer containing the data to
+ *                                be written to the device.
+ * @param count                   The number of bytes to write to the device.
+ * @param position                The current position of the file pointer in
+ *                                the device.  If the device is disconnected or
+ *                                needs to be reset, a seek operation to the
+ *                                given position is performed after the device
+ *                                reconnects.
+ * @param device_was_disconnected  A pointer to a variable which will be set to
+ *                                 1 if the device was disconnected during the
+ *                                 course of this function, or left unmodified
+ *                                 otherwise.
+ *
+ * @returns The number of bytes written to the device, or -1 if (a) an
+ *          unrecoverable error occurred, or (b) an error occurred and retry
+ *          attempts have been exhausted.
+ */
 int64_t write_or_reset_device(device_testing_context_type *device_testing_context, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
     int retry_count = 0;
     WINDOW *window;
@@ -1946,18 +2069,97 @@ void posix_memalign_error(device_testing_context_type *device_testing_context, i
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Resets the read/written flags in every sector of the given device's sector
+ * map.
+ *
+ * @param device_testing_context  The device whose sector map should be reset.
+ */
 void reset_sector_map(device_testing_context_type *device_testing_context) {
     for(uint64_t j = 0; j < device_testing_context->device_info.num_physical_sectors; j++) {
         device_testing_context->endurance_test_info.sector_map[j] &= SECTOR_MAP_FLAG_DO_NOT_USE | SECTOR_MAP_FLAG_FAILED;
     }
 }
 
+/**
+ * Resets the read/written flags in the selected portion of the given device's
+ * sector map.
+ *
+ * @param device_testing_context  The device whose sector map should be reset.
+ * @param start                   The beginning of the range of sectors to be
+ *                                reset.
+ * @param end                     The end of the range of sectors to be reset.
+ *                                The actual range of sectors that will be reset
+ *                                is [start, end).
+ */
 void reset_sector_map_partial(device_testing_context_type *device_testing_context, uint64_t start, uint64_t end) {
     for(uint64_t j = start; j < end; j++) {
         device_testing_context->endurance_test_info.sector_map[j] &= SECTOR_MAP_FLAG_DO_NOT_USE | SECTOR_MAP_FLAG_FAILED;
     }
 }
 
+/**
+ * The following data is written to each 512-byte sector:
+ *
+ * 00000000: SS SS SS SS SS SS SS SS   RR RR RR RR RR RR RR RR
+ * 00000010: UU UU UU UU UU UU UU UU   UU UU UU UU UU UU UU UU
+ * 00000020: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000030: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000040: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000050: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000060: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000070: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000080: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000090: LL MM NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000000a0: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000000b0: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000000c0: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000000d0: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000000e0: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000000f0: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000100: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000110: XX XX NN XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000120: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000130: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000140: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000150: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000160: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000170: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000180: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 00000190: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000001a0: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000001b0: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000001c0: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000001d0: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000001e0: XX XX XX XX XX XX XX XX   XX XX XX XX XX XX XX XX
+ * 000001f0: XX XX XX XX XX XX XX XX   XX XX XX XX CC CC CC CC
+ *
+ * L, M, N, and X are all randomly generated data.
+ *
+ * S is the result of taking the sector number and XORing it with L.
+ * R is the result of taking the round number and XORing it with M.
+ * U is the result of taking the device's UUID and XORing it with N.
+ * C is the CRC32 of the first 508 bytes of the sector's data.
+ *
+ * Why not just store the raw sector number/round number/UUID in the sector
+ * instead?  Because then we wouldn't do a very good job of detecting stuck-on
+ * or stuck-off bits in those locations.  This way, we're able to encode this
+ * information into the sector while still making it look like random data.
+ *
+ * The following functions are to assist with embedding/decoding this data.
+ */
+
+/**
+ * Given a sector of data read from a device (or about to be written to a
+ * device), get the XOR value needed to extract the sector number from the data
+ * (or the XOR value needed to embed the sector number into the data).
+ *
+ * @param data  A pointer to a buffer containing the data read from (or about to
+ *              be written to) the sector.
+ *
+ * @returns The XOR value needed to embed the sector number into (or extract the
+ *          sector number from) the sector.
+ */
 uint64_t get_sector_number_xor_val(char *data) {
     unsigned char *udata = (unsigned char *) data;
     return
@@ -1971,6 +2173,17 @@ uint64_t get_sector_number_xor_val(char *data) {
         ((uint64_t)udata[144]);
 }
 
+/**
+ * Given a sector of data read from a device (or about to be written to a
+ * device), get the XOR value needed to extract the round number from the data
+ * (or the XOR value needed to embed the round number into the data).
+ *
+ * @param data  A pointer to a buffer containing the data read from (or about to
+ *              be written to) the device.
+ *
+ * @returns The XOR value needed to embed the round number into (or extract the
+ *          round number from) the sector.
+ */
 int64_t get_round_num_xor_val(char *data) {
     unsigned char *udata = (unsigned char *) data;
     return
@@ -1984,6 +2197,14 @@ int64_t get_round_num_xor_val(char *data) {
         ((uint64_t)udata[145]);
 }
 
+/**
+ * Given a sector of data about to be written to a device, embed the device's
+ * UUID into the data.
+ *
+ * @param uuid  The UUID to embed into the data.
+ * @param data  A pointer to a buffer containing the data in which the UUID
+ *              should be embedded.
+ */
 void embed_device_uuid(uuid_t uuid, char *data) {
     int i;
     for(i = 0; i < 16; i++) {
@@ -1991,6 +2212,14 @@ void embed_device_uuid(uuid_t uuid, char *data) {
     }
 }
 
+/**
+ * Given a sector of data read from a device, extract the UUID from the data.
+ *
+ * @param data         A pointer to a buffer containing the data from which to
+ *                     extract the UUID.
+ * @param uuid_buffer  A pointer to a buffer where the extracted UUID should be
+ *                     stored.
+ */
 void get_embedded_device_uuid(char *data, char *uuid_buffer) {
     int i;
     for(i = 0; i < 16; i++) {
@@ -1998,30 +2227,91 @@ void get_embedded_device_uuid(char *data, char *uuid_buffer) {
     }
 }
 
+/**
+ * Given a sector of data about to be written to a device, embed the sector
+ * number into the data.
+ *
+ * @param data           A pointer to a buffer containing the data in which the
+ *                       sector number should be embedded.
+ * @param sector_number  The sector number to be embedded.
+ */
 void embed_sector_number(char *data, uint64_t sector_number) {
     *((uint64_t *) data) = sector_number ^ get_sector_number_xor_val(data);
 }
 
+/**
+ * Given a sector of data about to be written to a device, embed the round
+ * number into the data.
+ *
+ * @param data       A pointer to a buffer containing the data in which the
+ *                   round number should be embedded.
+ * @param round_num  The round number to be embedded.
+ */
 void embed_round_number(char *data, int64_t round_num) {
     *((int64_t *) (data + 8)) = round_num ^ get_round_num_xor_val(data);
 }
 
+/**
+ * Given a sector of data read from a device, extract the sector number from
+ * the data.
+ *
+ * @param data  A pointer to a buffer containing the data read from the device.
+ *
+ * @returns The sector number extracted from the data.
+ */
 uint64_t decode_embedded_sector_number(char *data) {
     return (*((uint64_t *) data)) ^ get_sector_number_xor_val(data);
 }
 
+/**
+ * Given a sector of data read from a device, extract the round number from the
+ * data.
+ *
+ * @param data  A pointer to a buffer containing the data read from the device.
+ *
+ * @returns The round number extracted from the data.
+ */
 int64_t decode_embedded_round_number(char *data) {
     return (*((int64_t *) (data + 8))) ^ get_round_num_xor_val(data);
 }
 
+/**
+ * Given a sector of data about to be written to a device, calculate the CRC32
+ * of the data and embed it into the data.
+ *
+ * @param data         A pointer to a buffer containing the data in which the
+ *                     CRC32 should be embedded.
+ * @param sector_size  The size of the sector, in bytes.
+ */
 void embed_crc32c(char *data, int sector_size) {
     *((uint32_t *) &data[sector_size - sizeof(uint32_t)]) = calculate_crc32c(0, data, sector_size - sizeof(uint32_t));
 }
 
+/**
+ * Given a sector of data read from a device, extract the CRC32 from the data.
+ *
+ * @param data         A pointer to a buffer containing the data read from the
+ *                     device.
+ * @param sector_size  The size of the sector, in bytes.
+ *
+ * @returns The CRC32 extracted from the data.
+ */
 uint32_t get_embedded_crc32c(char *data, int sector_size) {
     return *((uint32_t *) &data[sector_size - sizeof(uint32_t)]);
 }
 
+/**
+ * Log the contents of a sector, and the data that was expected to be in the
+ * sector, to the log file.
+ *
+ * @param device_testing_context  The device from which the data was read.
+ * @param sector_num              The sector number of the given sector.
+ * @param sector_size             The size of the sector, in bytes.
+ * @param expected_data           A pointer to a buffer containing the data
+ *                                expected to be in the sector.
+ * @param actual_data             A pointer to a buffer containing the data
+ *                                actually read from the device.
+ */
 void log_sector_contents(device_testing_context_type *device_testing_context, uint64_t sector_num, int sector_size, char *expected_data, char *actual_data) {
     char tmp[16];
     int i;
@@ -2048,6 +2338,15 @@ void log_sector_contents(device_testing_context_type *device_testing_context, ui
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_DEBUG_VERBOSE, MSG_BLANK_LINE);
 }
 
+/**
+ * Shows a warning to the user indicating that there was a problem loading the
+ * requested state file.  The warning automatically dismisses itself after 15
+ * seconds.
+ *
+ * @param device_testing_context  The current device being tested.  This is
+ *                                needed in case the screen needs to be redrawn
+ *                                while the dialog is being shown.
+ */
 void state_file_error(device_testing_context_type *device_testing_context) {
     WINDOW *window;
     int i;
@@ -2081,6 +2380,11 @@ void state_file_error(device_testing_context_type *device_testing_context) {
     erase_and_delete_window(window);
 }
 
+/**
+ * Shows the initial warning message displayed at the start of testing.
+ *
+ * @param device_testing_context  The device to be tested.
+ */
 void show_initial_warning_message(device_testing_context_type *device_testing_context) {
     WINDOW *window;
     int i;
@@ -2121,6 +2425,16 @@ void show_initial_warning_message(device_testing_context_type *device_testing_co
     erase_and_delete_window(window);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while opening
+ * the log file.  If ncurses is not active, a message is printed to the console
+ * instead.
+ *
+ * @param device_testing_context  The device being tested.
+ * @param filename                The path to the log file that was to be
+ *                                opened.
+ * @param errnum                  The error number of the error that occurred.
+ */
 void log_file_open_error(device_testing_context_type *device_testing_context, char *filename, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_LOG_FILE_OPEN_ERROR, filename, strerror(errnum));
 
@@ -2128,6 +2442,16 @@ void log_file_open_error(device_testing_context_type *device_testing_context, ch
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while opening
+ * the lock file.  If ncurses is not active, a message is printed to stdout
+ * instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is being shown.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void lockfile_open_error(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_LOCK_FILE_OPEN_ERROR, program_options.lock_file, strerror(errnum));
 
@@ -2135,6 +2459,16 @@ void lockfile_open_error(device_testing_context_type *device_testing_context, in
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while opening
+ * the stats file.  If ncurses is not active, a message is printed to stdout
+ * instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is being shown.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void stats_file_open_error(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_STATS_FILE_OPEN_ERROR, program_options.stats_file, strerror(errnum));
 
@@ -2142,6 +2476,16 @@ void stats_file_open_error(device_testing_context_type *device_testing_context, 
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while calling
+ * gettimeofday().  If ncurses is not active, a message is printed to the
+ * console instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is being shown.)
+ * @paran errnum                  The error number of the error that occurred.
+ */
 void no_working_gettimeofday(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_DEBUG, MSG_GETTIMEOFDAY_FAILED, strerror(errnum));
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_NO_WORKING_GETTIMEOFDAY);
@@ -2156,6 +2500,20 @@ void no_working_gettimeofday(device_testing_context_type *device_testing_context
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Get the number of contiguous sectors, starting with `starting_sector` and
+ * going to a max of `max_sectors`, that have not been flagged as "unwritable"
+ * in the device's sector map.
+ *
+ * @param device_testing_context  The device for which the number of writable
+ *                                sectors is being requested.
+ * @param starting_sector         The sector at which to start counting.
+ * @param max_sectors             The maximum number of sectors to count.
+ *
+ * @returns The number of contiguous sectors, starting from `starting_sector`,
+ *          which have not been flagged as "unwritable" in the sector map.  If
+ *          starting_sector has been flagged as "unwritable", 0 is returned.
+ */
 uint64_t get_max_writable_sectors(device_testing_context_type *device_testing_context, uint64_t starting_sector, uint64_t max_sectors) {
     uint64_t out = 0;
 
@@ -2163,6 +2521,21 @@ uint64_t get_max_writable_sectors(device_testing_context_type *device_testing_co
     return out;
 }
 
+/**
+ * Get the number of contiguous sectors, starting with `starting_sector` and
+ * going to a max of `max_sectors`, that have been flagged as "unwritable" in
+ * the device's sector map.
+ *
+ * @param device_testing_context  The device for which the number of unwritable
+ *                                sectors is being requested.
+ * @param starting_sector         The sector at which to start counting.
+ * @param max_sectors             The maximum number of sectors to count.
+ *
+ * @returns The number of contiguous sectors, starting from `starting_sector`,
+ *          which have been flagged as "unwritable" in the sector map.  If
+ *          `starting_sector` has not been flagged as "unwritable", 0 is
+ *          returned.
+ */
 uint64_t get_max_unwritable_sectors(device_testing_context_type *device_testing_context, uint64_t starting_sector, uint64_t max_sectors) {
     uint64_t out = 0;
 
@@ -2170,10 +2543,37 @@ uint64_t get_max_unwritable_sectors(device_testing_context_type *device_testing_
     return out;
 }
 
+/**
+ * Marks the given sector as unwritable.  No further I/O operations will be
+ * attempted on the given sector, and the sector will be flagged as "bad" on all
+ * future rounds of endurance testing.
+ *
+ * @param device_testing_context  The device that contains the unwritable
+ *                                sector.
+ * @param sector_num              The sector number of the unwritable sector.
+ */
 void mark_sector_unwritable(device_testing_context_type *device_testing_context, uint64_t sector_num) {
     device_testing_context->endurance_test_info.sector_map[sector_num] |= SECTOR_MAP_FLAG_DO_NOT_USE;
 }
 
+/**
+ * Reads a block of data from the device, automatically skipping over any
+ * sectors that have been flagged as "unwritable".  This function gracefully
+ * handles device errors by retrying the operation, resetting the device, and/or
+ * marking unreadable sectors as "unwritable".  Unreadable sectors are filled
+ * with all zeroes in the returned data.
+ *
+ * @param device_testing_context  The device from which to read.
+ * @param starting_sector         The sector number of the first sector from
+ *                                which to read.
+ * @param num_sectors             The number of sectors to read from the device.
+ * @param buffer                  A pointer to a buffer that will receive the
+ *                                data read from the device.
+ *
+ * @returns 0 if the data was read successfully, or -1 if an error occurred.
+ *          Generally speaking, a return value of -1 represents an unrecoverable
+ *          error.
+ */
 int endurance_test_read_block(device_testing_context_type *device_testing_context, uint64_t starting_sector, int num_sectors, char *buffer) {
     int ret, bytes_left_to_read, block_size;
     uint64_t num_sectors_to_read;
@@ -2234,6 +2634,16 @@ int endurance_test_read_block(device_testing_context_type *device_testing_contex
     return 0;
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while trying
+ * to locate the device described in the state file.  If ncurses is not active,
+ * a message is printed to stdout instead.  A message is logged to the log file
+ * as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ */
 void device_locate_error(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_DEVICE_LOCATE_ERROR);
     message_window(device_testing_context, stdscr, ERROR_TITLE,
@@ -2242,6 +2652,17 @@ void device_locate_error(device_testing_context_type *device_testing_context) {
                    "this program as root.)", 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that a device ambiguity error
+ * occurred while locating the device described in the state file.  (A device
+ * ambiguity error indicates that more than one device matched the parameters
+ * described in the state file.)  If ncurses is not active, a message is printed
+ * to stdout instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ */
 void multiple_matching_devices_error(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_DEVICE_AMBIGUITY_ERROR);
     message_window(device_testing_context, stdscr, ERROR_TITLE,
@@ -2250,6 +2671,18 @@ void multiple_matching_devices_error(device_testing_context_type *device_testing
                    "test on the command line.", 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that a device was located that
+ * matches the parameters described in the state file, but that a device was
+ * explicitly provided on the command line and the matched device is not the
+ * same as the one specified on the command line.  If ncurses is not active, a
+ * message is printed to stdout instead.  A message is logged to the log file as
+ * well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ */
 void wrong_device_specified_error(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_WRONG_DEVICE_ERROR);
     message_window(device_testing_context, stdscr, ERROR_TITLE,
@@ -2260,6 +2693,15 @@ void wrong_device_specified_error(device_testing_context_type *device_testing_co
                    "a different device on the command line.", 1);
 }
 
+/**
+ * Displays a message to the user indicating that no devices could be found that
+ * match the parameters described in the state file.  If ncurses is not active,
+ * a message is printed to stdout instead.  A message is logged to the log file
+ * as well.
+ *
+ * @returns A pointer to the window being displayed, or NULL if ncurses is not
+ *          active.
+ */
 WINDOW *no_matching_device_warning(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_DEVICE_NOT_ATTACHED);
     return message_window(NULL, stdscr, "No devices found",
@@ -2269,6 +2711,21 @@ WINDOW *no_matching_device_warning(device_testing_context_type *device_testing_c
                           "hit Ctrl+C now to abort the program.", 0);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while waiting
+ * for a device matching the parameters described in the state file to be
+ * connected.  If ncurses is not active, a message is printed to stdout instead.
+ * A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ * @param window                  A pointer to the window currently being
+ *                                displayed on screen, or NULL if no window is
+ *                                currently being displayed.  The provided
+ *                                window is erased and deleted before this
+ *                                function's message is displayed.
+ */
 void wait_for_device_connect_error(device_testing_context_type *device_testing_context, WINDOW *window) {
     if(window) {
         erase_and_delete_window(window);
@@ -2278,6 +2735,16 @@ void wait_for_device_connect_error(device_testing_context_type *device_testing_c
     message_window(device_testing_context, stdscr, ERROR_TITLE, "An error occurred while waiting for you to reconnect the device.", 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while calling
+ * fstat() for the given device.  If ncurses is not active, a message is printed
+ * to stdout instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void fstat_error(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OBTAIN_DEVICE_INFO);
 
@@ -2289,6 +2756,16 @@ void fstat_error(device_testing_context_type *device_testing_context, int errnum
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while calling
+ * stat() for the given device.  If ncurses is not active, a message is printed
+ * to stdout instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void stat_error(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OBTAIN_DEVICE_INFO);
 
@@ -2301,11 +2778,30 @@ void stat_error(device_testing_context_type *device_testing_context, int errnum)
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that the device they specified on
+ * the command line is not a block device.  If ncurses is not active, a message
+ * is printed to stdout instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ */
 void not_a_block_device_error(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_NOT_A_BLOCK_DEVICE, device_testing_context->device_info.device_name);
     message_window(device_testing_context, stdscr, ERROR_TITLE, "We won't be able to test this device because it isn't a block device.  You must provide a block device to test with.", 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while
+ * attempting to open the specified device.  If ncurses is not active, a message
+ * is printed to stdout instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void device_open_error(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OPEN_DEVICE);
 
@@ -2318,6 +2814,16 @@ void device_open_error(device_testing_context_type *device_testing_context, int 
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while calling
+ * ioctl() on the given device.  If ncurses is not active, a message is printed
+ * to stdout instead.  A message is logged to the log file as well.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ * @param errnum                  The error number of the error that occurred.
+ */
 void ioctl_error(device_testing_context_type *device_testing_context, int errnum) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_ERROR, MSG_UNABLE_TO_OBTAIN_DEVICE_INFO);
 
@@ -2328,6 +2834,16 @@ void ioctl_error(device_testing_context_type *device_testing_context, int errnum
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+/**
+ * Displays a dialog to the user indicating that an error occurred while saving
+ * the program state.  If ncurses is not active, a message is printed to stdout
+ * instead.  A message is logged to the log file as well.  Disables save stating
+ * by freeing program_options.state_file and then setting it to NULL.
+ *
+ * @param device_testing_context  The device being tested.  (This is needed in
+ *                                case the screen needs to be redrawn while the
+ *                                dialog is active.)
+ */
 void save_state_error(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_SAVE_STATE_ERROR);
     message_window(device_testing_context, stdscr, WARNING_TITLE, "An error occurred while trying to save the program state.  Save stating has been disabled.", 1);
@@ -2336,10 +2852,32 @@ void save_state_error(device_testing_context_type *device_testing_context) {
     program_options.state_file = NULL;
 }
 
+/**
+ * Determines whether the given byte position falls within the device's
+ * beginning-of-device area.
+ *
+ * @param starting_byte  The byte position to query.
+ *
+ * @returns Non-zero if the given byte position falls within the device's
+ *          beginning-of-device area, or zero if it does not.
+ */
 int was_bod_area_affected(device_testing_context_type *device_testing_context, uint64_t starting_byte) {
     return starting_byte < device_testing_context->device_info.bod_mod_buffer_size;
 }
 
+/**
+ * Determines whether the given byte range intersects with the device's
+ * middle-of-device area.
+ *
+ * @param device_testing_context  The device being queried.
+ * @param starting_byte           The byte position of the start of the range
+ *                                being queried.
+ * @param ending_byte             The byte position of the end of the range
+ *                                being queried.
+ *
+ * @returns Non-zero if the given byte range intersects the device's
+ *          middle-of-device area, or zero if it does not.
+ */
 int was_mod_area_affected(device_testing_context_type *device_testing_context, uint64_t starting_byte, uint64_t ending_byte) {
     return (starting_byte >= device_testing_context->device_info.middle_of_device && starting_byte < (device_testing_context->device_info.middle_of_device + device_testing_context->device_info.bod_mod_buffer_size)) || (ending_byte >= device_testing_context->device_info.middle_of_device && ending_byte < (device_testing_context->device_info.middle_of_device + device_testing_context->device_info.bod_mod_buffer_size));
 }

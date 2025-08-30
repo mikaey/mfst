@@ -8,9 +8,10 @@
  * Create a window and show a message in it.  Afterwards, the parent window
  * is touched and the window is refreshed.
  *
- * The strings in `msg` are displayed in the new window, one per line.  No
- * wrapping is applied.  If any part of the window would overflow off the edge
- * of the screen, the window is not created and NULL is returned.
+ * The string in `msg` is displayed in the new window, with line wrapping
+ * automatically applied.  The width of the dialog is calculated to take up 75%
+ * of the screen width, or the width of the longest line in the message,
+ * whichever is less.
  *
  * If `wait` is set to a non-zero value, two lines are added to the bottom of
  * the window: a blank line, and a line that shows "Press Enter to continue",
