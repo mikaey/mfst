@@ -219,5 +219,6 @@ extern const char **display_messages;
 #define MSG_REJECTING_STATE_FILE_WRONG_NUMBER_OF_BYTES            206
 #define MSG_ENDURANCE_TEST_ROUNDS_TO_0_1_PERCENT_FAILURE          207
 #define MSG_ENDURANCE_TEST_ROUNDS_TO_1_PERCENT_FAILURE            208
+#define MSG_NCURSES_REENABLING_NCURSES                            209
 
 #endif // !defined(MESSAGES_H)

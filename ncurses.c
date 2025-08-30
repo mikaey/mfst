@@ -13,6 +13,8 @@
 
 int ncurses_active;
 
+static struct timeval screen_dimensions_last_checked_at;
+
 /**
  * Initializes curses and sets up the color pairs that we frequently use.
  *
@@ -243,6 +245,28 @@ WINDOW *message_window(device_testing_context_type *device_testing_context, WIND
 
 int handle_key_inputs(device_testing_context_type *device_testing_context, WINDOW *curwin) {
     int key, width, height;
+    struct timeval now;
+    time_t diff;
+
+    if(!ncurses_active && !program_options.orig_no_curses) {
+        // Check the size of the screen -- can we re-enable ncurses?
+        // To prevent too much cursor flicker, we'll only check the size of the
+        // screen if it's been at least one second since the last time we
+        // checked it.
+
+        assert(!gettimeofday(&now, NULL));
+        diff = ((now.tv_sec - screen_dimensions_last_checked_at.tv_sec) * 1000000) + (now.tv_usec - screen_dimensions_last_checked_at.tv_usec);
+
+        if(diff >= 1000000) {
+            if(screen_setup()) {
+                // screen_setup() says no -- bail out now
+                return 0;
+            } else {
+                program_options.no_curses = 0;
+                log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_NCURSES_REENABLING_NCURSES);
+            }
+        }
+    }
 
     if(curwin) {
         key = wgetch(curwin);
@@ -251,6 +275,15 @@ int handle_key_inputs(device_testing_context_type *device_testing_context, WINDO
     }
 
     if(key == KEY_RESIZE) {
+        if(LINES < MIN_LINES || COLS < MIN_COLS) {
+            // Bail out
+            endwin();
+            ncurses_active = 0;
+            program_options.no_curses = 1;
+            log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_NCURSES_TERMINAL_TOO_SMALL);
+            assert(!gettimeofday(&screen_dimensions_last_checked_at, NULL));
+        }
+
         if(curwin) {
             getmaxyx(curwin, height, width);
             mvwin(curwin, (LINES - height) / 2, (COLS - width) / 2);

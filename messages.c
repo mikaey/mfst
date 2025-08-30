@@ -238,7 +238,8 @@ const char **log_file_messages = (const char *[])
      "Rejecting state file: unable to Base64-decode %s",
      "Rejecting state file: %s contains the wrong amount of data (expected %lu bytes, got %lu bytes)",
      "  Read/write cycles to 0.1%% failure    : %'lu",
-     "  Read/write cycles to 1%% failure      : %'lu"
+     "  Read/write cycles to 1%% failure      : %'lu",
+     "Terminal is now big enough -- re-enabling curses mode"
     };
 
 const char **display_messages = (const char *[])
