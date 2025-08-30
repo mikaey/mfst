@@ -826,9 +826,9 @@ int load_state(device_testing_context_type *device_testing_context) {
             if(all_props[i] == sector_size_ptr || all_props[i] == block_size_ptr) {
                 *((int *) destinations[i]) = json_object_get_int(obj);
             } else if(all_props[i] == ffr_ptr || all_props[i] == tpfr_ptr || all_props[i] == tfpfr_ptr) {
-                *((ssize_t *) destinations[i]) = json_object_get_int64(obj);
+                *((int64_t *) destinations[i]) = json_object_get_int64(obj);
             } else {
-                *((size_t *) destinations[i]) = json_object_get_uint64(obj);
+                *((uint64_t *) destinations[i]) = json_object_get_uint64(obj);
             }
         } else if(prop_types[i] == json_type_double) {
             *((double *) destinations[i]) = json_object_get_double(obj);
