@@ -236,7 +236,9 @@ const char **log_file_messages = (const char *[])
      "Rejecting state file: property %s has an incorrect data type",
      "Rejecting state file: property %s is unparseable or zero",
      "Rejecting state file: unable to Base64-decode %s",
-     "Rejecting state file: %s contains the wrong amount of data (expected %lu bytes, got %lu bytes)"
+     "Rejecting state file: %s contains the wrong amount of data (expected %lu bytes, got %lu bytes)",
+     "  Read/write cycles to 0.1%% failure    : %'lu",
+     "  Read/write cycles to 1%% failure      : %'lu"
     };
 
 const char **display_messages = (const char *[])
@@ -462,6 +464,8 @@ const char **display_messages = (const char *[])
      NULL,
      NULL,
      // 200
+     NULL,
+     NULL,
      NULL,
      NULL,
      NULL,

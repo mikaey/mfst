@@ -17,6 +17,8 @@ device_testing_context_type *new_device_testing_context(int bod_mod_buffer_size)
     ret->device_info.fd = -1;
 
     ret->endurance_test_info.rounds_to_first_error = -1ULL;
+    ret->endurance_test_info.rounds_to_0_1_threshold = -1ULL;
+    ret->endurance_test_info.rounds_to_1_threshold = -1ULL;
     ret->endurance_test_info.rounds_to_10_threshold = -1ULL;
     ret->endurance_test_info.rounds_to_25_threshold = -1ULL;
     ret->endurance_test_info.rounds_completed = 0ULL;

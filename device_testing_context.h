@@ -217,6 +217,12 @@ typedef struct _endurance_test_info_type {
                                              // map
 
 
+    uint64_t sectors_to_0_1_threshold;       // How many sectors must fail to
+                                             // cross the 0.1% threshold?
+
+    uint64_t sectors_to_1_threshold;         // How many sectors must fail to
+                                             // cross the 1% threshold?
+
     uint64_t sectors_to_10_threshold;        // How many sectors must fail to
                                              // cross the 10% threshold?
 
@@ -227,6 +233,14 @@ typedef struct _endurance_test_info_type {
                                              // we able to complete before the
                                              // device experienced its first
                                              // error?
+
+    uint64_t rounds_to_0_1_threshold;        // How many rounds of testing were
+                                             // we able to complete before 0.1%
+                                             // of the device's sectors failed?
+
+    uint64_t rounds_to_1_threshold;          // How many rounds of testing were
+                                             // we able to complete before 1%
+                                             // of the device's sectors failed?
 
     uint64_t rounds_to_10_threshold;         // How many rounds of testing were
                                              // we able to complete before 10%

@@ -340,6 +340,26 @@ int save_state(device_testing_context_type *device_testing_context) {
         }
     }
 
+    if(device_testing_context->endurance_test_info.rounds_to_0_1_threshold != -1ULL) {
+        obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_to_0_1_threshold);
+        if(json_object_object_add(parent, "rounds_to_0_1_threshold", obj)) {
+            json_object_put(obj);
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if(device_testing_context->endurance_test_info.rounds_to_1_threshold != -1ULL) {
+        obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_to_1_threshold);
+        if(json_object_object_add(parent, "rounds_to_1_threshold", obj)) {
+            json_object_put(obj);
+            json_object_put(parent);
+            json_object_put(root);
+            return -1;
+        }
+    }
+
     if(device_testing_context->endurance_test_info.rounds_to_10_threshold != -1ULL) {
         obj = json_object_new_int64(device_testing_context->endurance_test_info.rounds_to_10_threshold);
         if(json_object_object_add(parent, "ten_percent_failure_round", obj)) {
@@ -427,6 +447,8 @@ int load_state(device_testing_context_type *device_testing_context) {
     const char *bytes_read_ptr = "/state/bytes_read";
     const char *bytes_written_ptr = "/state/bytes_written";
     const char *ffr_ptr = "/state/first_failure_round";
+    const char *poptr_ptr = "/state/rounds_to_0_1_threshold";
+    const char *optr_ptr = "/state/rounds_to_1_threshold";
     const char *tpfr_ptr = "/state/ten_percent_failure_round";
     const char *tfpfr_ptr = "/state/twenty_five_percent_failure_round";
 
@@ -453,6 +475,8 @@ int load_state(device_testing_context_type *device_testing_context) {
         bytes_read_ptr,
         bytes_written_ptr,
         ffr_ptr,
+        poptr_ptr,
+        optr_ptr,
         tpfr_ptr,
         tfpfr_ptr,
         NULL
@@ -481,6 +505,8 @@ int load_state(device_testing_context_type *device_testing_context) {
         json_type_int,     // bytes_read_ptr
         json_type_int,     // bytes_written_ptr
         json_type_int,     // ffr_ptr
+        json_type_int,     // popfr_ptr
+        json_type_int,     // opfr_ptr
         json_type_int,     // tpfr_ptr
         json_type_int      // tfpfr_ptr
     };
@@ -508,6 +534,8 @@ int load_state(device_testing_context_type *device_testing_context) {
         1, // bytes_read_ptr
         1, // bytes_written_ptr
         0, // ffr_ptr
+        0, // popfr_ptr
+        0, // opfr_ptr
         0, // tpfr_ptr
         0  // tfpfr_ptr
     };
@@ -535,6 +563,8 @@ int load_state(device_testing_context_type *device_testing_context) {
         0, // bytes_read_ptr
         0, // bytes_written_ptr
         0, // ffr_ptr
+        0, // popfr_ptr
+        0, // opfr_ptr
         0, // tpfr_ptr
         0  // tfpfr_ptr
     };
@@ -562,8 +592,10 @@ int load_state(device_testing_context_type *device_testing_context) {
         NULL, // bytes_read_ptr
         NULL, // bytes_written_ptr
         NULL, // ffr_ptr
+        NULL, // popfr_ptr
+        NULL, // opfr_ptr
         NULL, // tpfr_ptr
-        NULL, // tfpfr_ptr
+        NULL  // tfpfr_ptr
     };
 
     size_t buffer_lens[] = {
@@ -589,8 +621,10 @@ int load_state(device_testing_context_type *device_testing_context) {
         0, // bytes_read_ptr
         0, // bytes_written_ptr
         0, // ffr_ptr
+        0, // popfr_ptr
+        0, // opfr_ptr
         0, // tpfr_ptr
-        0, // tfpfr_ptr
+        0  // tfpfr_ptr
     };
 
     void *destinations[] = {
@@ -616,6 +650,8 @@ int load_state(device_testing_context_type *device_testing_context) {
         &tmp_bytes_read,
         &tmp_bytes_written,
         &device_testing_context->endurance_test_info.rounds_to_first_error,
+        &device_testing_context->endurance_test_info.rounds_to_0_1_threshold,
+        &device_testing_context->endurance_test_info.rounds_to_1_threshold,
         &device_testing_context->endurance_test_info.rounds_to_10_threshold,
         &device_testing_context->endurance_test_info.rounds_to_25_threshold
     };
@@ -749,6 +785,8 @@ int load_state(device_testing_context_type *device_testing_context) {
         -1,                  // bytes_read_ptr
         -1,                  // bytes_written_ptr
         -1,                  // ffr_ptr
+        -1,                  // popfr_ptr
+        -1,                  // opfr_ptr
         -1,                  // tpfr_ptr
         -1                   // tfpfr_ptr
     };

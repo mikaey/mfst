@@ -1261,6 +1261,22 @@ void print_device_summary(device_testing_context_type *device_testing_context, i
         out_messages[2] = NULL;
     }
 
+    if(device_testing_context->endurance_test_info.rounds_to_0_1_threshold != -1ULL) {
+        log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_0_1_PERCENT_FAILURE, device_testing_context->endurance_test_info.rounds_to_0_1_threshold);
+        snprintf(messages[3], sizeof(messages[3]), "Read/write cycles to 0.1%% failure    : %'lu", device_testing_context->endurance_test_info.rounds_to_0_1_threshold);
+        out_messages[3] = messages[3];
+    } else {
+        out_messages[3] = NULL;
+    }
+
+    if(device_testing_context->endurance_test_info.rounds_to_1_threshold != -1ULL) {
+        log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_1_PERCENT_FAILURE, device_testing_context->endurance_test_info.rounds_to_1_threshold);
+        snprintf(messages[4], sizeof(messages[4]), "Read/write cycles to 1%% failure      : %'lu", device_testing_context->endurance_test_info.rounds_to_1_threshold);
+        out_messages[4] = messages[4];
+    } else {
+        out_messages[4] = NULL;
+    }
+
     if(device_testing_context->endurance_test_info.rounds_to_10_threshold != -1ULL) {
         log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_10_PERCENT_FAILURE, device_testing_context->endurance_test_info.rounds_to_10_threshold);
         snprintf(messages[5], sizeof(messages[3]), "Read/write cycles to 10%% failure     : %'lu", device_testing_context->endurance_test_info.rounds_to_10_threshold);
@@ -3295,6 +3311,16 @@ void perform_end_of_round_summary(device_testing_context_type *device_testing_co
             device_testing_context->endurance_test_info.rounds_to_first_error = device_testing_context->endurance_test_info.rounds_completed;
         }
 
+        if(device_testing_context->endurance_test_info.rounds_to_0_1_threshold == -1ULL &&
+           device_testing_context->endurance_test_info.total_bad_sectors >= device_testing_context->endurance_test_info.sectors_to_0_1_threshold) {
+            device_testing_context->endurance_test_info.rounds_to_0_1_threshold = device_testing_context->endurance_test_info.rounds_completed;
+        }
+
+        if(device_testing_context->endurance_test_info.rounds_to_1_threshold == -1ULL &&
+           device_testing_context->endurance_test_info.total_bad_sectors >= device_testing_context->endurance_test_info.sectors_to_1_threshold) {
+            device_testing_context->endurance_test_info.rounds_to_1_threshold = device_testing_context->endurance_test_info.rounds_completed;
+        }
+
         if(device_testing_context->endurance_test_info.rounds_to_10_threshold == -1ULL &&
            device_testing_context->endurance_test_info.total_bad_sectors >= device_testing_context->endurance_test_info.sectors_to_10_threshold) {
             device_testing_context->endurance_test_info.rounds_to_10_threshold = device_testing_context->endurance_test_info.rounds_completed;
@@ -3832,6 +3858,16 @@ int main(int argc, char **argv) {
     }
 
     // Precompute the failure thresholds
+    device_testing_context->endurance_test_info.sectors_to_0_1_threshold = device_testing_context->device_info.num_physical_sectors / 1000;
+    if(device_testing_context->device_info.num_physical_sectors % 1000) {
+        device_testing_context->endurance_test_info.sectors_to_0_1_threshold++;
+    }
+
+    device_testing_context->endurance_test_info.sectors_to_1_threshold = device_testing_context->device_info.num_physical_sectors / 100;
+    if(device_testing_context->device_info.num_physical_sectors % 100) {
+        device_testing_context->endurance_test_info.sectors_to_1_threshold++;
+    }
+
     device_testing_context->endurance_test_info.sectors_to_10_threshold = device_testing_context->device_info.num_physical_sectors / 10;
     if(device_testing_context->device_info.num_physical_sectors % 10) {
         device_testing_context->endurance_test_info.sectors_to_10_threshold++;
