@@ -1,10 +1,52 @@
+#include <assert.h>
 #include <curses.h>
+#include <locale.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "device_testing_context.h"
+#include "messages.h"
 #include "mfst.h"
 #include "ncurses.h"
+#include "util.h"
+
+int ncurses_active;
+
+/**
+ * Initializes curses and sets up the color pairs that we frequently use.
+ *
+ * @returns -1 if the screen is too small to hold the UI, 0 otherwise.
+ */
+int screen_setup() {
+    setlocale(LC_ALL, "");
+    initscr();
+
+    if(LINES < MIN_LINES || COLS < MIN_COLS) {
+        endwin();
+        return -1;
+    }
+
+    start_color();
+    cbreak();
+    noecho();
+    nonl();
+    nodelay(stdscr, TRUE);
+    curs_set(0);
+    intrflush(stdscr, FALSE);
+    keypad(stdscr, TRUE);
+    init_pair(BLACK_ON_WHITE, COLOR_BLACK, COLOR_WHITE);
+    init_pair(BLACK_ON_BLUE, COLOR_BLACK, COLOR_BLUE);
+    init_pair(BLACK_ON_GREEN, COLOR_BLACK, COLOR_GREEN);
+    init_pair(BLACK_ON_RED, COLOR_BLACK, COLOR_RED);
+    init_pair(GREEN_ON_BLACK, COLOR_GREEN, COLOR_BLACK);
+    init_pair(RED_ON_BLACK, COLOR_RED, COLOR_BLACK);
+    init_pair(BLACK_ON_MAGENTA, COLOR_BLACK, COLOR_MAGENTA);
+    init_pair(BLACK_ON_YELLOW, COLOR_BLACK, COLOR_YELLOW);
+
+    ncurses_active = 1;
+    return 0;
+}
 
 /**
  * Splits a string into multiple strings that are each less than or equal to
@@ -104,6 +146,13 @@ char **wordwrap(char *str, int max_line_length, int *string_count) {
     free(work_str);
     *string_count = output_count;
     return output;
+}
+
+void print_device_name(device_testing_context_type *device_testing_context) {
+    if(ncurses_active && device_testing_context->device_info.device_name) {
+        mvprintw(DEVICE_NAME_DISPLAY_Y, DEVICE_NAME_DISPLAY_X, "%.23s ", device_testing_context->device_info.device_name);
+        refresh();
+    }
 }
 
 WINDOW *message_window(device_testing_context_type *device_testing_context, WINDOW *parent, const char *title, char *msg, char wait) {
@@ -238,3 +287,222 @@ void print_with_color(int y, int x, int color, const char *str) {
         attroff(COLOR_PAIR(color));
     }
 }
+
+void draw_sector(uint64_t sector_num, int color, int with_diamond, int with_x) {
+    int block_num, row, col;
+
+    if(program_options.no_curses) {
+        return;
+    }
+
+    block_num = sector_num / sector_display.sectors_per_block;
+    if(block_num >= sector_display.num_blocks) {
+        row = sector_display.num_lines - 1;
+        col = sector_display.blocks_per_line - 1;
+    } else {
+        row = block_num / sector_display.blocks_per_line;
+        col = block_num - (row * sector_display.blocks_per_line);
+    }
+
+    attron(COLOR_PAIR(color));
+
+    if(with_diamond) {
+        mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ACS_DIAMOND);
+    } else if(with_x) {
+        mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, 'X');
+    } else {
+        mvaddch(row + SECTOR_DISPLAY_Y, col + SECTOR_DISPLAY_X, ' ');
+    }
+
+    attroff(COLOR_PAIR(color));
+}
+
+void draw_percentage(device_testing_context_type *device_testing_context) {
+    float percent_bad;
+    if(device_testing_context->device_info.num_physical_sectors) {
+        percent_bad = (((float) device_testing_context->endurance_test_info.total_bad_sectors) / ((float) device_testing_context->device_info.num_physical_sectors)) * 100.0;
+        mvprintw(PERCENT_SECTORS_FAILED_DISPLAY_Y, PERCENT_SECTORS_FAILED_DISPLAY_X, "%5.2f%%", percent_bad);
+    } else {
+        mvprintw(PERCENT_SECTORS_FAILED_DISPLAY_Y, PERCENT_SECTORS_FAILED_DISPLAY_X, "       ");
+    }
+}
+
+void draw_sectors(device_testing_context_type *device_testing_context, uint64_t start_sector, uint64_t end_sector) {
+    uint64_t i, j, num_sectors_in_cur_block, num_written_sectors, num_read_sectors;
+    uint64_t min, max;
+    char cur_block_has_bad_sectors;
+    int color;
+    int this_round;
+    int unwritable;
+
+    min = start_sector / sector_display.sectors_per_block;
+    max = (end_sector / sector_display.sectors_per_block) + ((end_sector % sector_display.sectors_per_block) ? 1 : 0);
+
+    if(min >= sector_display.num_blocks) {
+        min = sector_display.num_blocks - 1;
+    }
+
+    if(max > sector_display.num_blocks) {
+        max = sector_display.num_blocks;
+    }
+
+    for(i = min; i < max; i++) {
+        cur_block_has_bad_sectors = 0;
+        num_written_sectors = 0;
+        num_read_sectors = 0;
+
+        if(i == (sector_display.num_blocks - 1)) {
+            num_sectors_in_cur_block = sector_display.sectors_in_last_block;
+        } else {
+            num_sectors_in_cur_block = sector_display.sectors_per_block;
+        }
+
+        this_round = 0;
+        unwritable = 0;
+
+        for(j = i * sector_display.sectors_per_block; j < ((i * sector_display.sectors_per_block) + num_sectors_in_cur_block); j++) {
+            cur_block_has_bad_sectors |= device_testing_context->endurance_test_info.sector_map[j] & SECTOR_MAP_FLAG_FAILED;
+            num_written_sectors += (device_testing_context->endurance_test_info.sector_map[j] & SECTOR_MAP_FLAG_WRITTEN_THIS_ROUND) >> 1;
+            num_read_sectors += (device_testing_context->endurance_test_info.sector_map[j] & SECTOR_MAP_FLAG_READ_THIS_ROUND) >> 2;
+            this_round |= device_testing_context->endurance_test_info.sector_map[j] & SECTOR_MAP_FLAG_FAILED_THIS_ROUND;
+            unwritable |= device_testing_context->endurance_test_info.sector_map[j] & SECTOR_MAP_FLAG_DO_NOT_USE;
+        }
+
+        if(cur_block_has_bad_sectors) {
+            if(num_read_sectors == num_sectors_in_cur_block) {
+                color = BLACK_ON_YELLOW;
+            } else if(num_written_sectors == num_sectors_in_cur_block) {
+                color = BLACK_ON_MAGENTA;
+            } else {
+                color = BLACK_ON_RED;
+            }
+        } else if(num_read_sectors == num_sectors_in_cur_block) {
+            color = BLACK_ON_GREEN;
+        } else if(num_written_sectors == num_sectors_in_cur_block) {
+            color = BLACK_ON_BLUE;
+        } else {
+            color = BLACK_ON_WHITE;
+        }
+
+        draw_sector(i * sector_display.sectors_per_block, color, this_round, unwritable);
+    }
+}
+
+void redraw_sector_map(device_testing_context_type *device_testing_context) {
+    if(program_options.no_curses) {
+        return;
+    }
+
+    sector_display.blocks_per_line = COLS - 41;
+    sector_display.num_lines = LINES - 8;
+    sector_display.num_blocks = sector_display.num_lines * sector_display.blocks_per_line;
+    sector_display.sectors_per_block = device_testing_context->device_info.num_physical_sectors / sector_display.num_blocks;
+    sector_display.sectors_in_last_block = device_testing_context->device_info.num_physical_sectors % sector_display.num_blocks + sector_display.sectors_per_block;
+
+    mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_testing_context->device_info.sector_size);
+
+    if(!device_testing_context->endurance_test_info.sector_map) {
+        return;
+    }
+
+    draw_sectors(device_testing_context, 0, device_testing_context->device_info.num_physical_sectors);
+}
+
+void print_sql_status(sql_thread_status_type status) {
+    mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "               ");
+
+    if(!program_options.db_host || !program_options.db_user || !program_options.db_pass || !program_options.db_name) {
+        return;
+    }
+
+    switch(status) {
+    case SQL_THREAD_NOT_CONNECTED:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Not connected"); break;
+    case SQL_THREAD_CONNECTING:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Connecting"); break;
+    case SQL_THREAD_CONNECTED:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Connected"); break;
+    case SQL_THREAD_DISCONNECTED:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Disconnected"); break;
+    case SQL_THREAD_QUERY_EXECUTING:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Executing query"); break;
+    case SQL_THREAD_ERROR:
+        mvprintw(SQL_STATUS_Y, SQL_STATUS_X, "Error"); break;
+    }
+}
+
+void draw_colored_char(int y_loc, int x_loc, int color_pair, chtype ch) {
+    attron(COLOR_PAIR(color_pair));
+    mvaddch(y_loc, x_loc, ch);
+    attroff(COLOR_PAIR(color_pair));
+}
+
+void draw_colored_str(int y_loc, int x_loc, int color_pair, char *str) {
+    attron(COLOR_PAIR(color_pair));
+    mvaddstr(y_loc, x_loc, str);
+    attroff(COLOR_PAIR(color_pair));
+}
+
+void print_status_update(device_testing_context_type *device_testing_context) {
+    struct timeval cur_time;
+    double rate;
+    double secs_since_last_update;
+
+    char str[18];
+
+    if(program_options.no_curses) {
+        return;
+    }
+
+    assert(!gettimeofday(&cur_time, NULL));
+    secs_since_last_update = cur_time.tv_sec - device_testing_context->endurance_test_info.screen_counters.last_update_time.tv_sec;
+    secs_since_last_update *= 1000000.0;
+    secs_since_last_update += cur_time.tv_usec - device_testing_context->endurance_test_info.screen_counters.last_update_time.tv_usec;
+    secs_since_last_update /= 1000000.0;
+
+    if(secs_since_last_update < 0.5) {
+        return;
+    }
+
+    rate = device_testing_context->endurance_test_info.screen_counters.bytes_since_last_update / secs_since_last_update;
+    device_testing_context->endurance_test_info.screen_counters.bytes_since_last_update = 0;
+
+    format_rate(rate, str, sizeof(str));
+    mvprintw(STRESS_TEST_SPEED_DISPLAY_Y, STRESS_TEST_SPEED_DISPLAY_X, " %-15s", str);
+
+    assert(!gettimeofday(&device_testing_context->endurance_test_info.screen_counters.last_update_time, NULL));
+}
+
+WINDOW *device_disconnected_message() {
+    return message_window(NULL, stdscr, "Device Disconnected",
+                          "The device has been disconnected.  It may have done "
+                          "this on its own, or it may have been manually "
+                          "removed (e.g., if someone pulled the device out of "
+                          "its USB port).\n\nDon't worry -- just plug the "
+                          "device back in.  We'll verify that it's the same "
+                          "device, then resume the stress test automatically.", 0);
+}
+
+WINDOW *resetting_device_message() {
+    return message_window(NULL, stdscr, "Attempting to reset device",
+                          "The device has encountered an error.  We're "
+                          "attempting to reset the device to see if that fixes "
+                          "the issue.  You shouldn't need to do anything -- "
+                          "but if this message stays up for a while, it might "
+                          "indicate that the device has failed or isn't "
+                          "handling the reset well.  In that case, you can try "
+                          "unplugging the device and plugging it back in to "
+                          "get the device working again.", 0);
+}
+
+void malloc_error(device_testing_context_type *device_testing_context, int errnum) {
+    char msg_buffer[256];
+
+    snprintf(msg_buffer, sizeof(msg_buffer),
+             "Failed to allocate memory for one of the buffers we need to do "
+             "the stress test.  Unfortunately this means that we have to abort "
+             "the stress test.\n\nThe error we got was: %s", strerror(errnum));
+
+    message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
