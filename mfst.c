@@ -131,6 +131,7 @@ void log_log(device_testing_context_type *device_testing_context, const char *fu
  */
 void stats_log(device_testing_context_type *device_testing_context) {
     double write_rate, read_rate, bad_sector_rate;
+    uint64_t total_bytes_written, total_bytes_read, total_bad_sectors;
     time_t now = time(NULL);
     char *ctime_str;
     struct timeval micronow;
@@ -141,36 +142,43 @@ void stats_log(device_testing_context_type *device_testing_context) {
         return;
     }
 
+    // In a hypothetical future version where the program is multi-threaded, the
+    // counter values could change mid-function call -- so to head off that
+    // possibility, we'll just make copies of them now
+    total_bytes_written = device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written;
+    total_bytes_read = device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read;
+    total_bad_sectors = device_testing_context->endurance_test_info.total_bad_sectors;
+
     ctime_str = ctime(&now);
 
     // Trim off the training newline from ctime_str
     ctime_str[strlen(ctime_str) - 1] = 0;
-    write_rate = ((double)(device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_written)) /
+    write_rate = ((double)(total_bytes_written - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_written)) /
         (((double)timediff(device_testing_context->endurance_test_info.stats_file_counters.last_update_time, micronow)) / 1000000);
-    read_rate = ((double)(device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_read)) /
+    read_rate = ((double)(total_bytes_read - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_read)) /
         (((double)timediff(device_testing_context->endurance_test_info.stats_file_counters.last_update_time, micronow)) / 1000000);
-    bad_sector_rate = ((double)(device_testing_context->endurance_test_info.total_bad_sectors - device_testing_context->endurance_test_info.stats_file_counters.last_bad_sectors)) /
+    bad_sector_rate = ((double)(total_bad_sectors - device_testing_context->endurance_test_info.stats_file_counters.last_bad_sectors)) /
         (((double)timediff(device_testing_context->endurance_test_info.stats_file_counters.last_update_time, micronow)) / 60000000);
 
     fprintf(device_testing_context->endurance_test_info.stats_file_handle,
             "%s,%lu,%lu,%lu,%0.2f,%lu,%lu,%0.2f,%lu,%lu,%0.2f\n",
             ctime_str,
             device_testing_context->endurance_test_info.rounds_completed,
-            device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_written,
-            device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written,
+            total_bytes_written - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_written,
+            total_bytes_written,
             write_rate,
-            device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_read,
-            device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read,
+            total_bytes_read - device_testing_context->endurance_test_info.stats_file_counters.last_bytes_read,
+            total_bytes_read,
             read_rate,
-            device_testing_context->endurance_test_info.total_bad_sectors - device_testing_context->endurance_test_info.stats_file_counters.last_bad_sectors,
-            device_testing_context->endurance_test_info.total_bad_sectors,
+            total_bad_sectors - device_testing_context->endurance_test_info.stats_file_counters.last_bad_sectors,
+            total_bad_sectors,
             bad_sector_rate);
     fflush(device_testing_context->endurance_test_info.stats_file_handle);
 
     memcpy(&device_testing_context->endurance_test_info.stats_file_counters.last_update_time, &micronow, sizeof(struct timeval));
-    device_testing_context->endurance_test_info.stats_file_counters.last_bytes_written = device_testing_context->endurance_test_info.stats_file_counters.total_bytes_written;
-    device_testing_context->endurance_test_info.stats_file_counters.last_bytes_read = device_testing_context->endurance_test_info.stats_file_counters.total_bytes_read;
-    device_testing_context->endurance_test_info.stats_file_counters.last_bad_sectors = device_testing_context->endurance_test_info.total_bad_sectors;
+    device_testing_context->endurance_test_info.stats_file_counters.last_bytes_written = total_bytes_written;
+    device_testing_context->endurance_test_info.stats_file_counters.last_bytes_read = total_bytes_read;
+    device_testing_context->endurance_test_info.stats_file_counters.last_bad_sectors = total_bad_sectors;
 }
 
 /**
