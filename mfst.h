@@ -7,6 +7,7 @@
 #include <uuid/uuid.h>
 
 #include "device_testing_context.h"
+#include "fake_flash_enum.h"
 
 #define VERSION "0.4"
 #define PROGRAM_NAME " Mikaey's Flash Stress Test v" VERSION " "

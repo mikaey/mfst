@@ -8,11 +8,7 @@
 #include <sys/time.h>
 #include <uuid/uuid.h>
 
-typedef enum {
-    FAKE_FLASH_UNKNOWN,
-    FAKE_FLASH_YES,
-    FAKE_FLASH_NO
-} FakeFlashEnum;
+#include "fake_flash_enum.h"
 
 typedef struct _device_info_type {
     char *device_name;             // Current device name (e.g., /dev/sdb)
@@ -297,7 +293,5 @@ int device_info_set_device_name(device_testing_context_type *dtc, char *device_n
 void device_info_invalidate_file_handle(device_testing_context_type *dtc);
 
 void endurance_test_info_reset_per_round_counters(device_testing_context_type *dtc);
-
-#include "mfst.h"
 
 #endif // !defined(DEVICE_TESTING_CONTEXT_H)
