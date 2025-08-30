@@ -266,6 +266,8 @@ void redraw_screen(device_testing_context_type *device_testing_context) {
     int j;
 
     if(!program_options.no_curses) {
+        erase();
+
         box(stdscr, 0, 0);
 
         // Draw the labels for the bottom of the screen
