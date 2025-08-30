@@ -55,7 +55,7 @@ void io_error_during_speed_test(device_testing_context_type *device_testing_cont
  * be displaying that mark.
  */
 void print_class_marking_qualifications(device_testing_context_type *device_testing_context) {
-    if(speed_qualifications_shown && !program_options.no_curses) {
+    if(!program_options.no_curses && (device_testing_context->performance_test_info.sequential_write_speed || (device_testing_context->performance_test_info.random_write_iops && device_testing_context->performance_test_info.random_read_iops))) {
         attron(A_BOLD);
         mvaddstr(SPEED_CLASS_QUALIFICATIONS_LABEL_Y, SPEED_CLASS_QUALIFICATIONS_LABEL_X, "Speed Class Qualifications:");
         mvaddstr(SPEED_CLASS_2_LABEL_Y , SPEED_CLASS_2_LABEL_X , "Class 2 :");
@@ -301,7 +301,6 @@ int probe_device_speeds(device_testing_context_type *device_testing_context) {
                 *(wr ? &device_testing_context->performance_test_info.sequential_write_speed : &device_testing_context->performance_test_info.sequential_read_speed) = ctr / secs;
 
                 if(wr) {
-                    speed_qualifications_shown = 1;
                     print_class_marking_qualifications(device_testing_context);
                 }
             }

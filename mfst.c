@@ -40,7 +40,6 @@
 const char *WARNING_TITLE = "WARNING";
 const char *ERROR_TITLE = "ERROR";
 
-char speed_qualifications_shown;
 char ncurses_active;
 char *forced_device;
 
@@ -573,11 +572,6 @@ void redraw_screen(device_testing_context_type *device_testing_context) {
         if(device_testing_context->performance_test_info.random_write_iops) {
             mvprintw(RANDOM_WRITE_SPEED_DISPLAY_Y, RANDOM_WRITE_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_testing_context->performance_test_info.random_write_iops,
                 format_rate(device_testing_context->performance_test_info.random_write_iops * 4096, rate, sizeof(rate)));
-        }
-
-        if(device_testing_context->performance_test_info.sequential_read_speed != 0 || device_testing_context->performance_test_info.sequential_write_speed != 0 ||
-            device_testing_context->performance_test_info.random_read_iops != 0 || device_testing_context->performance_test_info.random_write_iops != 0) {
-            speed_qualifications_shown = 1;
         }
 
         print_class_marking_qualifications(device_testing_context);
@@ -3403,7 +3397,6 @@ int main(int argc, char **argv) {
         delete_device_testing_context(device_testing_context);
     }
 
-    speed_qualifications_shown = 0;
     sector_display.sectors_per_block = 0;
     main_thread_status = MAIN_THREAD_STATUS_IDLE;
 
