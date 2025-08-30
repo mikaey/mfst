@@ -1285,7 +1285,23 @@ void print_device_summary(device_testing_context_type *device_testing_context, i
         out_messages[5] = NULL;
     }
 
-    out_messages[6] = NULL;
+    if(device_testing_context->endurance_test_info.rounds_to_25_threshold != -1ULL) {
+        log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_25_PERCENT_FAILURE, device_testing_context->endurance_test_info.rounds_to_25_threshold);
+        snprintf(messages[6], sizeof(messages[6]), "Read/write cycles to 25%% failure     : %'lu", device_testing_context->endurance_test_info.rounds_to_25_threshold);
+        out_messages[6] = messages[6];
+    } else {
+        out_messages[6] = NULL;
+    }
+
+    if(abort_reason == ABORT_REASON_FIFTY_PERCENT_FAILURE) {
+        log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_ENDURANCE_TEST_ROUNDS_TO_50_PERCENT_FAILURE, device_testing_context->endurance_test_info.rounds_completed - 1);
+        snprintf(messages[7], sizeof(messages[5]), "Read/write cycles to 50%% failure     : %'lu", device_testing_context->endurance_test_info.rounds_completed - 1);
+        out_messages[7] = messages[7];
+    } else {
+        out_messages[7] = NULL;
+    }
+
+    out_messages[8] = NULL;
 
     // Clear out msg_buffer
     msg_buffer[0] = 0;
