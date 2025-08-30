@@ -2317,6 +2317,9 @@ int endurance_test_read_block(device_testing_context_type *device_testing_contex
 
                     mark_sector_unwritable(device_testing_context, starting_sector + ((block_size - bytes_left_to_read) / device_testing_context->device_info.sector_size));
                     mark_sector_bad(device_testing_context, starting_sector + ((block_size - bytes_left_to_read) / device_testing_context->device_info.sector_size));
+
+                    // Zero out the portion of the buffer that corresponds to the bad sector
+                    memset(buffer + (block_size - bytes_left_to_read), 0, device_testing_context->device_info.sector_size);
                     bytes_left_to_read -= device_testing_context->device_info.sector_size;
 
                     if((lseek_or_retry(device_testing_context, (starting_sector * device_testing_context->device_info.sector_size) + (block_size - bytes_left_to_read), NULL)) == -1) {
