@@ -776,6 +776,7 @@ int write_data_to_device(device_testing_context_type *device_testing_context, vo
 
     if(ret = posix_memalign((void **) &aligned_buf, sysconf(_SC_PAGESIZE), len)) {
         log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_POSIX_MEMALIGN_ERROR, strerror(ret));
+        errno = ret;
         return -1;
     }
 

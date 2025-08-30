@@ -755,6 +755,8 @@ int find_device(device_testing_context_type *device_testing_context, device_sear
 
     if(!num_matches) {
         log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_FIND_DEVICE_NO_MATCHING_DEVICES_FOUND);
+
+        errno = ENODEV;
         return -1;
     } else if(num_matches > 1) {
         // We found more than one match.  Was a preferred_dev_name provided?
