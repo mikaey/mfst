@@ -298,10 +298,6 @@ void redraw_screen(device_testing_context_type *device_testing_context) {
 
         attroff(A_BOLD);
 
-        if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
-            print_sql_status(sql_thread_status);
-        }
-
         // Draw the device name
         print_device_name(device_testing_context);
 
@@ -3068,7 +3064,7 @@ int main(int argc, char **argv) {
     WINDOW *window;
     pthread_t sql_thread;
     sql_thread_params_type sql_thread_params;
-    sql_thread_status_type prev_sql_thread_status = 0;
+    sql_thread_status_type prev_sql_thread_status;
     int num_uuid_mismatches, device_mangling_detected;
     device_search_params_t device_search_params;
     device_search_result_t *device_search_result;
@@ -3084,6 +3080,7 @@ int main(int argc, char **argv) {
     program_options.lock_file = NULL;
     program_options.state_file = NULL;
     forced_device = NULL;
+    prev_sql_thread_status = 0;
     device_testing_context = NULL;
 
     void cleanup() {
@@ -3633,10 +3630,11 @@ int main(int argc, char **argv) {
             sql_thread_status = SQL_THREAD_ERROR;
             log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_ERROR_CREATING_SQL_THREAD, strerror(iret));
         }
+
+        print_sql_status(sql_thread_status);
+        prev_sql_thread_status = sql_thread_status;
     }
 
-    print_sql_status(sql_thread_status);
-    prev_sql_thread_status = sql_thread_status;
     device_testing_context->endurance_test_info.test_started = 1;
 
     for(; device_testing_context->endurance_test_info.total_bad_sectors < (device_testing_context->device_info.num_physical_sectors / 2); device_testing_context->endurance_test_info.rounds_completed++) {
