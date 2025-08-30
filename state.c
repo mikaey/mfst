@@ -38,7 +38,8 @@ int save_state(device_testing_context_type *device_testing_context) {
     char *sector_map, *b64str;
     char device_uuid[37];
     size_t i, j;
-    int version = 2;
+
+    const int version = 2;
 
     // If no state file was specified, do nothing
     if(!program_options.state_file) {
