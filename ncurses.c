@@ -1,3 +1,8 @@
+#include "config.h"
+#include "ncurses.h"
+
+#if defined(HAVE_NCURSES)
+
 #include <assert.h>
 #include <curses.h>
 #include <locale.h>
@@ -8,7 +13,6 @@
 #include "device_testing_context.h"
 #include "messages.h"
 #include "mfst.h"
-#include "ncurses.h"
 #include "util.h"
 
 int ncurses_active;
@@ -539,3 +543,13 @@ void malloc_error(device_testing_context_type *device_testing_context, int errnu
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
 }
 
+#else
+
+int ncurses_active = 0;
+WINDOW *stdscr = NULL;
+int LINES = 0;
+int COLS = 0;
+int A_BOLD = 0;
+chtype ACS_DIAMOND = 0;
+
+#endif // defined(HAVE_NCURSES)

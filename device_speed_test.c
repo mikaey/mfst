@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <curses.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>

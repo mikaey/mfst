@@ -1,10 +1,17 @@
 #if !defined(NCURSES_H)
 #define NCURSES_H
 
-#include <curses.h>
+#include <inttypes.h>
 
+#include "config.h"
 #include "device_testing_context.h"
 #include "sql.h"
+
+extern int ncurses_active;
+
+#  if defined(HAVE_NCURSES)
+
+#include <curses.h>
 
 /**
  * Initializes curses and sets up the color pairs that we frequently use.
@@ -211,6 +218,55 @@ WINDOW *resetting_device_message();
  */
 void malloc_error(device_testing_context_type *device_testing_context, int errnum);
 
-extern int ncurses_active;
+#  else
 
+// If ncurses support isn't enabled, we'll just make all of these placeholder functions that do nothing.
+#define ERR -1
+typedef void WINDOW;
+typedef unsigned chtype;
+
+inline int screen_setup() { return 0; }
+inline void print_device_name(device_testing_context_type *device_testing_context) {}
+inline WINDOW *message_window(device_testing_context_type *device_testing_context, WINDOW *parent, const char *title, char *msg, char wait) { return NULL; }
+inline int handle_key_inputs(device_testing_context_type *device_testing_context, WINDOW *curwin) { return ERR; }
+inline void erase_and_delete_window(WINDOW *window) {}
+inline void print_with_color(int y, int x, int color, const char *str) {}
+inline void draw_sector(uint64_t sector_num, int color, int with_diamond, int with_x) {}
+inline void draw_percentage(device_testing_context_type *device_testing_context) {}
+inline void draw_sectors(device_testing_context_type *device_testing_context, uint64_t start_sector, uint64_t end_sector) {}
+inline void redraw_sector_map(device_testing_context_type *device_testing_context) {}
+inline void print_sql_status(sql_thread_status_type status) {}
+inline void draw_colored_char(int y_loc, int x_loc, int color_pair, chtype ch) {}
+inline void draw_colored_str(int y_loc, int x_loc, int color_pair, char *str) {}
+inline void print_status_update(device_testing_context_type *device_testing_context) {}
+inline WINDOW *device_disconnected_message() { return NULL; }
+inline WINDOW *resetting_device_message() { return NULL; }
+inline void malloc_error(device_testing_context_type *device_testing_context, int errnum) {}
+
+// Placeholders for some ncurses functions
+// This is probably a sign that I need to write wrappers for these...
+inline void attroff(int num) {}
+inline void attron(int num) {}
+inline void box(WINDOW *window, chtype vertical_char, chtype horizontal_char) {}
+inline int COLOR_PAIR(int num) { return 0; }
+inline void delwin(WINDOW *window) {}
+inline void endwin() {}
+inline void erase() {}
+inline void mvaddch(int y, int x, char ch) {}
+inline void mvaddstr(int y, int x, const char *str) {}
+inline void mvprintw(int y, int x, const char *str, ...) {}
+inline void mvwprintw(WINDOW *window, int y, int x, const char *str, ...) {}
+inline void refresh() {}
+inline void touchwin(WINDOW *window) {}
+inline void wattron(WINDOW *window, int attr) {}
+inline void wattroff(WINDOW *window, int attr) {}
+inline void wrefresh(WINDOW *window) {}
+
+extern WINDOW *stdscr;
+extern int LINES;
+extern int COLS;
+extern int A_BOLD;
+extern chtype ACS_DIAMOND ;
+
+#  endif // defined(HAVE_NCURSES)
 #endif // !defined(NCURSES_H)

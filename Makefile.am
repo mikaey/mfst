@@ -1,0 +1,9 @@
+bin_PROGRAMS = mfst
+mfst_SOURCES = base64.c block_size_test.c crc32.c device.c device_speed_test.c device_testing_context.c lockfile.c messages.c mfst.c ncurses.c rng.c sql.c state.c util.c
+mfst_HEADERS = base64.h block_size_test.h crc32.h device.h device_speed_test.h device_testing_context.h fake_flash_enum.h lockfile.h messages.h mfst.h ncurses.h rng.h sql.h state.h util.h
+mfst_LDADD = @ncurses_LIBS@ @libudev_LIBS@ @jsonc_LIBS@ @MariaDB_LIBS@ @uuid_LIBS@
+mfst_CFLAGS = @ncurses_CFLAGS@ @libudev_CFLAGS@ @jsonc_CFLAGS@ @MariaDB_CFLAGS@ @uuid_CFLAGS@
+mfstdir = .
+# base64_HEADERS = base64.h
+# block_size_test_HEADERS = block_size_test.h lockfile.h messages.h mfst.h ncurses.h rng.h util.h device_testing_context.h
+# crc32_HEADERS = crc32.h

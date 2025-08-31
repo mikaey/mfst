@@ -1,8 +1,9 @@
+#include "config.h"
+
 #define _LARGEFILE64_SOURCE
 #define _GNU_SOURCE
 
 #include <assert.h>
-#include <curses.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -394,7 +395,9 @@ void redraw_screen(device_testing_context_type *device_testing_context) {
  */
 void wait_for_file_lock(device_testing_context_type *device_testing_context, WINDOW **topwin) {
     WINDOW *window;
+#if defined(HAVE_NCURSES)
     FILE *memfile;
+#endif // defined(HAVE_NCURSES)
     main_thread_status_type previous_status;
 
     if(is_lockfile_locked()) {
@@ -402,11 +405,13 @@ void wait_for_file_lock(device_testing_context_type *device_testing_context, WIN
         main_thread_status = MAIN_THREAD_STATUS_PAUSED;
         log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_WAITING_FOR_FILE_LOCK);
         if(!program_options.no_curses) {
+#if defined(HAVE_NCURSES)
             if(topwin) {
                 assert(memfile = fmemopen(NULL, 131072, "r+"));
                 putwin(*topwin, memfile);
                 rewind(memfile);
             }
+#endif // defined(HAVE_NCURSES)
 
             window = message_window(device_testing_context, stdscr, "Paused",
                                     "Another copy of this program is running "
@@ -421,12 +426,7 @@ void wait_for_file_lock(device_testing_context_type *device_testing_context, WIN
         while(is_lockfile_locked()) {
             if(!program_options.no_curses) {
                 handle_key_inputs(device_testing_context, window);
-
-                // I'm not sure if napms() depends on curses being initialized,
-                // so we'll play it safe and assume that it does.  If curses
-                // isn't initialized, we'll just use sleep() instead and sleep
-                // for a full second.  It shouldn't be a big deal.
-                napms(100);
+                usleep(100000);
             } else {
                 sleep(1);
             }
@@ -435,18 +435,16 @@ void wait_for_file_lock(device_testing_context_type *device_testing_context, WIN
         log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_FILE_LOCK_RELEASED);
         main_thread_status = previous_status;
 
-        // We're just going to redraw the whole thing, so we don't need to
-        // worry about erasing it first
         if(!program_options.no_curses) {
-            delwin(window);
-            erase();
-
+            erase_and_delete_window(window);
             redraw_screen(device_testing_context);
 
             if(topwin) {
+#if defined(HAVE_NCURSES)
                 *topwin = getwin(memfile);
                 fclose(memfile);
                 wrefresh(*topwin);
+#endif // defined(HAVE_NCURSES)
             }
         }
     }
@@ -1100,7 +1098,11 @@ void print_device_summary(device_testing_context_type *device_testing_context, i
 void print_help(char *program_name) {
     printf("Usage: %s [ [-s | --stats-file filename] [-i | --stats-interval seconds]\n", program_name);
     printf("       [-l | --log-file filename] [-b | --probe-for-block-size]\n");
-    printf("       [-n | --no-curses] [--this-will-destroy-my-device]\n");
+    printf("       "
+#if defined(HAVE_NCURSES)
+           "[-n | --no-curses] "
+#endif // defined(HAVE_NCURSES)
+           "[--this-will-destroy-my-device]\n");
     printf("       [-f | --lockfile filename] [-e | --sectors count]\n");
     printf("       [--dbhost hostname --dbuser username --dbpass password --dbname database\n");
     printf("       [--dbport port] [--cardname name|--cardid id]] device-name |\n");
@@ -1181,7 +1183,9 @@ int parse_command_line_arguments(int argc, char **argv) {
         { "log-file"                   , required_argument, NULL, 'l' },
         { "probe-for-block-size"       , no_argument      , NULL, 'b' },
         { "stats-interval"             , required_argument, NULL, 'i' },
+#if defined(HAVE_NCURSES)
         { "no-curses"                  , no_argument      , NULL, 'n' },
+#endif // defined(HAVE_NCURSES)
         { "help"                       , no_argument      , NULL, 'h' },
         { "this-will-destroy-my-device", no_argument      , NULL, 2   },
         { "lockfile"                   , required_argument, NULL, 'f' },
@@ -1201,6 +1205,10 @@ int parse_command_line_arguments(int argc, char **argv) {
     // Set the defaults for the command-line options
     memset(&program_options, 0, sizeof(program_options));
     program_options.stats_interval = 60;
+
+#if !defined(HAVE_NCURSES)
+    program_options.no_curses = 1;
+#endif // !defined(HAVE_NCURSES)
 
     while(1) {
         c = getopt_long(argc, argv, "be:f:hi:l:ns:t:", options, &optindex);
@@ -1248,10 +1256,12 @@ int parse_command_line_arguments(int argc, char **argv) {
                 }
 
                 assert(program_options.log_file = strdup(optarg)); break;
+#if defined(HAVE_NCURSES)
             case 'n':
                 program_options.no_curses = 1;
                 program_options.orig_no_curses = 1;
                 break;
+#endif // defined(HAVE_NCURSES)
             case 'p':
                 program_options.probe_for_optimal_block_size = 1; break;
             case 's':
@@ -1412,7 +1422,6 @@ int handle_device_disconnect(device_testing_context_type *device_testing_context
  */
 off_t lseek_or_retry(device_testing_context_type *device_testing_context, off_t position, int *device_was_disconnected) {
     int retry_count = 0;
-    WINDOW *window;
     int64_t ret;
     int iret;
     char *new_device_name;
@@ -1658,7 +1667,6 @@ int64_t read_or_reset_device(device_testing_context_type *device_testing_context
  */
 int64_t write_or_retry(device_testing_context_type *device_testing_context, void *buf, uint64_t count, off_t position, int *device_was_disconnected) {
     int retry_count = 0;
-    WINDOW *window;
     int64_t ret;
     int iret;
     char *new_device_name;
@@ -2133,6 +2141,7 @@ void show_initial_warning_message(device_testing_context_type *device_testing_co
             handle_key_inputs(device_testing_context, window);
             usleep(100000);
             if(i && !(i % 10)) {
+
                 delwin(window);
                 snprintf(msg_buffer, sizeof(msg_buffer), warning_text, program_options.device_name, 15 - (i / 10));
                 window = message_window(device_testing_context, stdscr, WARNING_TITLE, msg_buffer, 0);
