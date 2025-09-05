@@ -108,3 +108,12 @@ void endurance_test_info_reset_per_round_counters(device_testing_context_type *d
         dtc->endurance_test_info.num_good_sectors_this_round = 0;
     }
 }
+
+void device_info_delete_state_file_name(device_testing_context_type *dtc) {
+    if(dtc) {
+        if(dtc->state_file_name) {
+            free(dtc->state_file_name);
+            dtc->state_file_name = NULL;
+        }
+    }
+}

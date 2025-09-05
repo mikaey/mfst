@@ -291,6 +291,7 @@ void delete_device_testing_context(device_testing_context_type *dtc);
 
 int device_info_set_device_name(device_testing_context_type *dtc, char *device_name);
 void device_info_invalidate_file_handle(device_testing_context_type *dtc);
+void device_info_delete_state_file_name(device_testing_context_type *dtc);
 
 void endurance_test_info_reset_per_round_counters(device_testing_context_type *dtc);
 

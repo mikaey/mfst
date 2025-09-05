@@ -2581,6 +2581,8 @@ void save_state_error(device_testing_context_type *device_testing_context) {
     log_log(device_testing_context, NULL, SEVERITY_LEVEL_WARNING, MSG_SAVE_STATE_ERROR);
     message_window(device_testing_context, stdscr, WARNING_TITLE, "An error occurred while trying to save the program state.  Save stating has been disabled.", 1);
 
+    device_info_delete_state_file_name(device_testing_context);
+
     free(program_options.state_file);
     program_options.state_file = NULL;
 }
