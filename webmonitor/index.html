@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SD Card Monitor</title>
+        <style type="text/css">
+         body {
+             font-family: Tahoma, Arial, sans-serif;
+         }
+         .cardContainer {
+             display: inline-block;
+             width: 300px;
+             border: 1px solid gray;
+             border-radius: 3px;
+             padding: 5px;
+             margin: 10px;
+         }
+
+         .cardName {
+             min-height: 3em;
+             max-height: 3em;
+             overflow: hidden;
+             text-overflow: ellipsis;
+         }
+
+         .sectorMapCanvas {
+             margin-bottom: -3px;
+             width: 100%;
+             height: 20px;
+             margin-bottom: -11px;
+         }
+
+         .warningIcon {
+             background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAsQAAALEBxi1JjQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAHDSURBVEiJ7ZO9T5NRFMZ/5xbb0lYSvhSHDpIuRAKz21vREMRComnY/RoIo42LiRECkaSJOPsnwMRATBxgYyIuJEYWBwY+Qim0UGv1fY+DYkrbt30hMSw847nneX7n3NwLl7poidfGzdvJ5rC/kAY4LoVeRFfnv3vxNXkFRALFKUXGAcKBQgFIefF52uDQGonZOOtAAAClZBvT17m8+LWR13gB2Ojcv/A/Y/l96qS9eBtusGcN3zXIJwBzvQMAZ2cPAMUZal9Z+nhugFpWU5bIZ6AXoOXDLAC5Zy9PWr605rf6ZW3tp1tG3Ss6IDxxEg4goSASCpa39BxcvTFeL8MVcDg42KbIq3pmAIXXOSvRcWaA/ePKNNDeCAC0/hImzwTIxBO3gKeVdc0fo7mjaoPq8/2Bkb5aWTU/mlHnnSJVZ/nUjNugPmydA+5UZVUWMvHEI0Xu1UzpjuLrjrowNJ6NDz+sC9Bk0i+qb93GDD0Zo/nxmNsxqpL+Zlmnntmpa9jfLYyKSMwt4OjNe9fwv7rZQuQBsFATYIxsqFIEgpVOACeTbQQois9slBeqfvKudb/LIL2VdS9y0PVrK0vb5/Fe6v/pN7e9eu4wAO4mAAAAAElFTkSuQmCC');
+             background-repeat: no-repeat;
+             background-position: right top;
+             background-origin: content-box;
+         }
+
+         .warningIcon div {
+             padding-right: 24px;
+         }
+
+         .badSectors {
+             float: right;
+             font-size: 8pt;
+             color: gray;
+         }
+
+         .rounds {
+             font-size: 8pt;
+         }
+
+         .status {
+             font-size: 8pt;
+             margin-bottom: -6px;
+         }
+
+         .rate {
+             font-size: 8pt;
+             float: right;
+             margin-bottom: -6px;
+         }
+
+         .badSectorCanvas {
+             width: 100%;
+             height: 10px;
+             margin-bottom: -3px;
+             clear: right;
+         }
+        </style>
+    </head>
+    <body>
+        <script>
+         function parseRate(rate) {
+             if(rate < 1024) {
+                 return rate.toFixed(0) + ' bytes/sec';
+             } else if(rate < (1024 * 1024)) {
+                 return (rate / 1024).toFixed(2) + ' KB/sec';
+             } else if(rate < (1024 * 1024 * 1024)) {
+                 return (rate / (1024 * 1024)).toFixed(2) + ' MB/sec';
+             } else if(rate < (1024 * 1024 * 1024 * 1024)) {
+                 return (rate / (1024 * 1024 * 1024)).toFixed(2) + ' GB/sec';
+             } else if(rate < (1024 * 1024 * 1024 * 1024 * 1024)) {
+                 return (rate / (1024 * 1024 * 1024 * 1024)).toFixed(2) + ' TB/sec';
+             } else {
+                 return (rate / (1024 * 1024 * 1024 * 1024 * 1024)).toFixed(2) + ' PB/sec';
+             }
+         }
+
+         function drawGraphs(since) {
+             let url = 'data.php';
+             if(typeof since != 'undefined') {
+                 url += '?since=' + since;
+             }
+
+             fetch(url).then(r => r.json()).then(j => {
+                 let prevElem = false;
+                 if(Array.isArray(j)) {
+                     j.forEach(i => {
+                         if(typeof i == 'object' && typeof i.id == 'string' && typeof i.data == 'string' && typeof i.name == 'string' && typeof i.last_updated == 'string') {
+                             let curContainer = document.querySelector('#container' + i.id);
+                             let curElem = document.querySelector('#id' + i.id);
+                             let curCanvas = document.querySelector('#canvas' + i.id);
+                             let badSectorCanvas = document.querySelector('#badSectorCanvas' + i.id);
+                             let badSectorElem = document.querySelector('#badSectors' + i.id);
+                             let roundElem = document.querySelector('#rounds' + i.id);
+                             let statusElem = document.querySelector('#status' + i.id);
+                             let rateElem = document.querySelector('#rate' + i.id);
+                             let elemExists = (curElem !== null) && (curCanvas !== null) && (badSectorCanvas !== null) && (badSectorElem !== null) && (roundElem !== null) && (statusElem !== null) && (rateElem !== null);
+                             let warningIcon = false;
+
+                             if(!elemExists) {
+                                 curContainer = document.createElement('div');
+                                 curContainer.id = 'container' + i.id;
+                                 curContainer.className = 'cardContainer';
+
+                                 curElem = document.createElement('div');
+                                 curElem.classList.add('cardName');
+                                 curElem.id = 'id' + i.id;
+
+                                 let subElem = document.createElement('div');
+                                 subElem.innerText = i.name;
+                                 curElem.appendChild(subElem);
+
+                                 curContainer.appendChild(curElem);
+
+                                 rateElem = document.createElement('div');
+                                 rateElem.classList.add('rate');
+                                 rateElem.id = 'rate' + i.id;
+
+                                 curContainer.appendChild(rateElem);
+
+                                 statusElem = document.createElement('div');
+                                 statusElem.classList.add('status');
+                                 statusElem.id = 'status' + i.id;
+
+                                 curContainer.appendChild(statusElem);
+
+                                 curCanvas = document.createElement('canvas');
+                                 curCanvas.classList.add('sectorMapCanvas');
+                                 curCanvas.id = 'canvas' + i.id;
+
+                                 curContainer.appendChild(curCanvas);
+
+                                 badSectorCanvas = document.createElement('canvas');
+                                 badSectorCanvas.classList.add('badSectorCanvas');
+                                 badSectorCanvas.id = 'badSectorCanvas' + i.id;
+
+                                 curContainer.appendChild(badSectorCanvas);
+
+                                 badSectorElem = document.createElement('div');
+                                 badSectorElem.classList.add('badSectors');
+                                 badSectorElem.id = 'badSectors' + i.id;
+
+                                 curContainer.appendChild(badSectorElem);
+
+                                 roundElem = document.createElement('div');
+                                 roundElem.classList.add('rounds');
+                                 roundElem.id = 'rounds' + i.id;
+
+                                 curContainer.appendChild(roundElem);
+
+                                 if(prevElem) {
+                                     prevElem.insertAdjacentElement('afterend', curContainer);
+                                 } else {
+                                     document.body.insertAdjacentElement('afterbegin', curContainer);
+                                 }
+
+                                 curCanvas.width = curCanvas.clientWidth;
+                                 badSectorCanvas.width = badSectorCanvas.clientWidth;
+                             }
+
+                             prevElem = curContainer;
+
+                             curContainer.dataset['last_updated'] = i.last_updated;
+
+                             let context = curCanvas.getContext('2d');
+                             let width = curCanvas.width;
+                             let data = atob(i.data);
+                             let sliceWidth = width / (data.length * 2);
+
+                             context.clearRect(0, 0, width, curCanvas.height);
+
+                             let curRangeStart = 0;
+                             let curRangeVal = 0;
+                             let newRangeVal = 0;
+
+                             for(a = 0; a < (data.length * 2); a++) {
+                                 let nibble = (a % 2) ? (data.charCodeAt(Math.floor(a / 2)) & 0xf0) >> 4 : data.charCodeAt(Math.floor(a / 2)) & 0x0f;
+
+                                 if(!(nibble & 0x0f)) {
+                                     newRangeVal = 0;
+                                 } else if(nibble & 0x01) {
+                                     if(nibble & 0x08) {
+                                         newRangeVal = 6;
+                                     } else if(nibble & 0x04) {
+                                         newRangeVal = 5;
+                                     } else if(nibble & 0x02) {
+                                         newRangeVal = 4;
+                                     } else {
+                                         newRangeVal = 3;
+                                     }
+                                 } else {
+                                     if(nibble & 0x04) {
+                                         newRangeVal = 2;
+                                     } else if(nibble & 0x02) {
+                                         newRangeVal = 1;
+                                     }
+                                 }
+
+                                 if(curRangeVal != newRangeVal) {
+                                     if(curRangeStart !== -1) {
+                                         switch(curRangeVal) {
+                                             case 1: context.fillStyle = 'blue'; break;
+                                             case 2: context.fillStyle = '#0f0'; break;
+                                             case 3: context.fillStyle = 'red'; break;
+                                             case 4: context.fillStyle = 'magenta'; break;
+                                             case 5: context.fillStyle = 'yellow'; break;
+                                             case 6: context.fillStyle = 'orange'; break;
+                                             default: context.fillStyle = 'gray'; break;
+                                         }
+
+                                         context.fillRect(curRangeStart * sliceWidth, 0, (a - curRangeStart) * sliceWidth, curCanvas.height);
+                                     }
+
+                                     curRangeStart = a;
+                                     curRangeVal = newRangeVal;
+                                 }
+                             }
+
+                             // Finish off the last part of the graph
+                             if(curRangeStart === -1) {
+                                 curRangeStart = 0;
+                             }
+
+                             switch(curRangeVal) {
+                                 case 1: context.fillStyle = 'blue'; break;
+                                 case 2: context.fillStyle = '#0f0'; break;
+                                 case 3: context.fillStyle = 'red'; break;
+                                 case 4: context.fillStyle = 'magenta'; break;
+                                 case 5: context.fillStyle = 'yellow'; break;
+                                 case 6: context.fillStyle = 'orange'; break;
+                                 default: context.fillStyle = 'gray'; break;
+                             }
+
+                             context.fillRect(curRangeStart * sliceWidth, 0, a * sliceWidth, curCanvas.height);
+
+                             if(typeof i.size == 'string' && typeof i.num_bad_sectors == 'string') {
+                                 let badSectorContext = badSectorCanvas.getContext('2d');
+                                 badSectorContext.fillStyle = 'gray';
+                                 badSectorContext.fillRect(0, 0, badSectorCanvas.width, badSectorCanvas.height);
+
+                                 if(i.num_bad_sectors > 0) {
+                                     let badSectorWidth = (i.num_bad_sectors / i.size) * badSectorCanvas.width;
+                                     badSectorContext.fillStyle = 'red';
+                                     badSectorContext.fillRect(0, 0, badSectorWidth, badSectorCanvas.height);
+                                 }
+
+                                 if(i.num_bad_sectors == 0) {
+                                     badSectorElem.innerText = '---';
+                                 } else {
+                                     let percent = (i.num_bad_sectors / i.size) * 100;
+                                     if(percent < 0.01) {
+                                         badSectorElem.innerText = '<0.01%';
+                                     } else {
+                                         badSectorElem.innerText = percent.toFixed(2) + '%';
+                                     }
+                                 }
+                             }
+
+                             if(typeof i.cur_round_num == 'string') {
+                                 let roundNum = Number.parseInt(i.cur_round_num);
+                                 roundElem.innerText = 'Round ' + roundNum.toLocaleString();
+                             }
+                             if(typeof i.rate != 'undefined' && i.rate && !Number.isNaN(Number.parseFloat(i.rate))) {
+                                 rateElem.innerText = parseRate(Number.parseFloat(i.rate));
+                                 curContainer.dataset['rate'] = Number.parseFloat(i.rate);
+                             } else {
+                                 rateElem.innerText = '---';
+                                 curContainer.dataset['rate'] = 0;
+                             }
+
+                             if(typeof i.status == 'string' && i.status && !Number.isNaN(Number.parseInt(i.status))) {
+                                 curContainer.dataset['status'] = i.status;
+                                 switch(Number.parseInt(i.status)) {
+                                     case 1: statusElem.innerText = 'Paused'; break;
+                                     case 2: statusElem.innerText = 'Writing'; break;
+                                     case 3: statusElem.innerText = 'Reading'; break;
+                                     case 4: statusElem.innerText = 'Device disconnected'; break;
+                                     case 5: statusElem.innerText = 'Program ending'; break;
+                                     default: statusElem.innerText = '---'; break;
+                                 }
+                             } else {
+                                 statusElem.innerText = '---';
+                             }
+
+                         }
+                     });
+                 }
+
+                 document.querySelectorAll('.cardContainer').forEach(elem => {
+                     if(((elem.dataset['last_updated'] * 1000) < ((new Date()).getTime() - 300000))) {
+                         document.querySelector('#id' + elem.id.replace('container', '')).classList.add('warningIcon');
+                         document.querySelector('#status' + elem.id.replace('container', '')).innerText = 'Client offline';
+                     } else if(elem.dataset['status'] == 4 || elem.dataset['status'] == 5) {
+                         document.querySelector('#id' + elem.id.replace('container', '')).classList.add('warningIcon');
+                     } else if(elem.dataset['rate'] == 0 && elem.dataset['status'] != 1) {
+                         document.querySelector('#id' + elem.id.replace('container', '')).classList.add('warningIcon');
+                         document.querySelector('#status' + elem.id.replace('container', '')).innerText = 'Device stopped';
+                     } else {
+                         document.querySelector('#id' + elem.id.replace('container', '')).classList.remove('warningIcon');
+                     }
+                 });
+
+             });
+
+             let time = (new Date().getTime() / 1000).toFixed(0);
+             window.setTimeout(() => {
+                 drawGraphs(time);
+             }, 10000);
+         }
+
+         drawGraphs();
+        </script>
+    </body>
+</html>
