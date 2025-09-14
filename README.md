@@ -6,8 +6,6 @@ This program will:
 * Speed test the device and determine which SD card speed markings it would likely qualify for
 * Stress test the device to see how long it will survive
 
-[!(Animated screenshot showing the program running and stress testing the device)](mfst.mp4)
-
 ## WARNING
 This program operates only on block devices (e.g., entire disks).  Further, it will overwrite every portion of your device with random data.  It makes no attempt to preserve any data on the device before it starts doing this.  **DO NOT USE THIS PROGRAM ON ANY DISK THAT HAS DATA THAT IS NOT PROPERLY BACKED UP.**  If you accidentally use it on a device that had data you cared about, you should consider that data permanently gone.  You have been warned.
 
