@@ -152,7 +152,7 @@ A basic web application that displays this data is included in the `webmonitor` 
 | `--dbpass password`               | The password to use when connecting to the MySQL or MariaDB host. |
 | `--dbname database_name`          | The name of the database to use when connecting to the MySQL or MariaDB host. |
 | `--cardname name`                 | The name of the card, as you want it to be registered in the database.  (This is descriptive and only for your own use.  Make sure to enclose the name in quotes if it includes spaces or special characters!) |
-| `--cardid id`                     | Force the program to use the given ID when logging information on this card to the database.  (You generally shouldn't need to use this option -- the program will figure it out on its own.  However, if you do provide it, keep in mind that the program will be expecting the value of the `id` column from `cards` or `consolidated_sector_maps` table.) |
+| `--cardid id`                     | Force the program to use the given ID when logging information on this card to the database.  (You generally shouldn't need to use this option -- the program will figure it out on its own.  However, if you do provide it, keep in mind that the program will be expecting the value of the `id` column from either the `cards` or `consolidated_sector_maps` table.) |
 | `-h`/`--help`                     | Display the program's help text. |
 
 ## Things I Want To Do
