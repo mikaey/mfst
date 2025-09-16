@@ -1555,7 +1555,7 @@ int64_t read_or_retry(device_testing_context_type *device_testing_context, void 
         log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_READ_ERROR_IN_SECTOR, position / device_testing_context->device_info.sector_size);
     }
 
-    while(ret == -1 && retry_count < MAX_RESET_RETRIES) {
+    while(ret <= 0 && retry_count < MAX_RESET_RETRIES) {
         if(did_device_disconnect(device_testing_context->device_info.device_num)) {
             if(handle_device_disconnect(device_testing_context, position, 1)) {
                 return -1;
