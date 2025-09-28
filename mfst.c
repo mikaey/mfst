@@ -2996,6 +2996,10 @@ int probe_device_info(device_testing_context_type *device_testing_context) {
         return -1;
     }
 
+    if(fstat(device_testing_context->device_info.fd, &fs)) {
+        return -1;
+    }
+
     device_testing_context->device_info.device_num = fs.st_rdev;
     device_testing_context->device_info.num_logical_sectors = device_testing_context->device_info.logical_size / device_testing_context->device_info.sector_size;
 
