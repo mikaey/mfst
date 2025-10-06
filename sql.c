@@ -495,7 +495,7 @@ void *sql_thread_main(void *arg) {
     uuid_unparse(params->device_testing_context->device_info.device_uuid, uuid_str);
     memset(&previous_time, 0, sizeof(previous_time));
 
-    while(1) {    
+    while(!params->program_ended) {
         if(!(mysql = mysql_init(NULL))) {
             sql_thread_status = SQL_THREAD_ERROR;
             log_log(params->device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_INIT_ERROR);
@@ -586,7 +586,7 @@ void *sql_thread_main(void *arg) {
             }
 
             sleep(30);
-        } while(!result);
+        } while(!result && !params->program_ended);
 
         sleep(30);
     }

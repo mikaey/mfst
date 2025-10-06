@@ -3101,6 +3101,8 @@ int main(int argc, char **argv) {
     void cleanup() {
         log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_PROGRAM_ENDING);
 
+        sql_thread_params.program_ended = 1;
+
         close_lockfile();
 
         if(ncurses_active) {
@@ -3640,6 +3642,7 @@ int main(int argc, char **argv) {
         sql_thread_params.card_name = program_options.card_name;
         sql_thread_params.card_id = program_options.card_id;
         sql_thread_params.device_testing_context = device_testing_context;
+        sql_thread_params.program_ended = 0;
 
         if(iret = pthread_create(&sql_thread, NULL, &sql_thread_main, &sql_thread_params)) {
             sql_thread_status = SQL_THREAD_ERROR;

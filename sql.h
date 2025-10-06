@@ -23,6 +23,7 @@ typedef struct _sql_thread_params_type {
     char *card_name;
     device_testing_context_type *device_testing_context;
     uint64_t card_id;
+    volatile int program_ended;
 } sql_thread_params_type;
 
 extern volatile sql_thread_status_type sql_thread_status;
