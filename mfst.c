@@ -945,30 +945,35 @@ uint64_t probe_device_size(device_testing_context_type *device_testing_context) 
 }
 
 int *random_list(device_testing_context_type *device_testing_context) {
-    int i, j, k, l, source[16], temp[16], *list;
+    int i, j, k, l, *source, *temp, *list;
 
-    assert(list = malloc(sizeof(int) * 16));
+    assert(list = malloc(sizeof(int) * NUM_SLICES));
+    assert(source = malloc(sizeof(int) * NUM_SLICES));
+    assert(temp = malloc(sizeof(int) * NUM_SLICES));
 
     // Initialize the source list
-    for(i = 0; i < 16; i++) {
+    for(i = 0; i < NUM_SLICES; i++) {
         source[i] = i;
     }
 
     for(i = 0; i < 16; i++) {
         // Pick a new number and add it to the list
-        j = (rng_get_random_number(device_testing_context) & RAND_MAX) % (16 - i);
+        j = (rng_get_random_number(device_testing_context) & RAND_MAX) % (NUM_SLICES - i);
         list[i] = source[j];
 
         // Remove the item from the list
-        for(k = 0, l = 0; k < (16 - i); k++) {
+        for(k = 0, l = 0; k < (NUM_SLICES - i); k++) {
             if(k != j) {
                 temp[l++] = source[k];
             }
         }
 
         // Transfer the temp list to the main list
-        memcpy(source, temp, sizeof(int) * (15 - i));
+        memcpy(source, temp, sizeof(int) * ((NUM_SLICES - 1) - i));
     }
+
+    free(source);
+    free(temp);
 
     return list;
 }
