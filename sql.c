@@ -133,7 +133,7 @@ int sql_thread_update_sector_map(device_testing_context_type *device_testing_con
 
     if(mysql_stmt_prepare(stmt, update_query, strlen(update_query))) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             ret = 1;
@@ -159,7 +159,7 @@ int sql_thread_update_sector_map(device_testing_context_type *device_testing_con
 
     if(mysql_stmt_send_long_data(stmt, 1, consolidated_sector_map, consolidated_sector_map_size)) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             ret = 1;
@@ -176,7 +176,7 @@ int sql_thread_update_sector_map(device_testing_context_type *device_testing_con
 
     if(mysql_stmt_execute(stmt)) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             ret = 1;
@@ -212,7 +212,7 @@ int sql_thread_insert_card(device_testing_context_type *device_testing_context, 
 
     if(mysql_stmt_prepare(stmt, insert_query, strlen(insert_query))) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             result = 1;
@@ -258,7 +258,7 @@ int sql_thread_insert_card(device_testing_context_type *device_testing_context, 
 
     if(mysql_stmt_execute(stmt)) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             result = 1;
@@ -303,7 +303,7 @@ int sql_thread_find_card(device_testing_context_type *device_testing_context, MY
 
     if(mysql_stmt_prepare(stmt, find_card_query, strlen(find_card_query))) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             result = 1;
@@ -348,7 +348,7 @@ int sql_thread_find_card(device_testing_context_type *device_testing_context, MY
     sql_thread_status = SQL_THREAD_QUERY_EXECUTING;
     if(mysql_stmt_execute(stmt)) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             result = 1;
@@ -388,7 +388,7 @@ int sql_thread_update_card(device_testing_context_type *device_testing_context, 
 
     if(mysql_stmt_prepare(stmt, update_query, strlen(update_query))) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             result = 1;
@@ -427,7 +427,7 @@ int sql_thread_update_card(device_testing_context_type *device_testing_context, 
     sql_thread_status = SQL_THREAD_QUERY_EXECUTING;
     if(mysql_stmt_execute(stmt)) {
         result = mysql_stmt_errno(stmt);
-        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED) {
+        if(result == CR_SERVER_GONE_ERROR || result == CR_SERVER_LOST || result == ER_CONNECTION_KILLED || result == CR_CONN_HOST_ERROR) {
             sql_thread_status = SQL_THREAD_DISCONNECTED;
             log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_MYSQL_LOST_CONNECTION);
             result = 1;
