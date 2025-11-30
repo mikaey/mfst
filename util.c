@@ -39,10 +39,19 @@ time_t timediff(struct timeval start_time, struct timeval end_time) {
 void multifree(int num_args, ...) {
     int n;
     va_list list;
+    void *ptr;
 
     va_start(list, num_args);
     for(n = 0; n < num_args; n++) {
-        free(va_arg(list, void *));
+        ptr = va_arg(list, void *);
+        if(ptr) {
+            free(ptr);
+        }
+    }
+
+    va_end(list);
+}
+
     }
 }
 
