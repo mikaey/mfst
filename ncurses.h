@@ -218,6 +218,21 @@ WINDOW *resetting_device_message();
  */
 void malloc_error(device_testing_context_type *device_testing_context, int errnum);
 
+/**
+ * Prints class marking qualifications to the screen.
+ *
+ * @param device_testing_context  The device currently being tested.
+ */
+void print_class_marking_qualifications(device_testing_context_type *device_testing_context);
+
+/**
+ * Redraws the entire display.
+ *
+ * @param device_testing_context  The device whose details will be shown on the
+ *                                screen.
+ */
+void redraw_screen(device_testing_context_type *device_testing_context);
+
 #  else
 
 // If ncurses support isn't enabled, we'll just make all of these placeholder functions that do nothing.

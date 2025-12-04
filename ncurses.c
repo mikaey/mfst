@@ -18,6 +18,7 @@
 int ncurses_active;
 
 static struct timeval screen_dimensions_last_checked_at;
+static char msg_buffer[256];
 
 /**
  * Initializes curses and sets up the color pairs that we frequently use.
@@ -541,6 +542,227 @@ void malloc_error(device_testing_context_type *device_testing_context, int errnu
              "the stress test.\n\nThe error we got was: %s", strerror(errnum));
 
     message_window(device_testing_context, stdscr, ERROR_TITLE, msg_buffer, 1);
+}
+
+/**
+ * Using the results of the speed tests, print out the various SD speed class
+ * markings and whether or not the speed results indicate that the card should
+ * be displaying that mark.
+ */
+void print_class_marking_qualifications(device_testing_context_type *device_testing_context) {
+    if(!program_options.no_curses && (device_testing_context->performance_test_info.sequential_write_speed || (device_testing_context->performance_test_info.random_write_iops && device_testing_context->performance_test_info.random_read_iops))) {
+        attron(A_BOLD);
+        mvaddstr(SPEED_CLASS_QUALIFICATIONS_LABEL_Y, SPEED_CLASS_QUALIFICATIONS_LABEL_X, "Speed Class Qualifications:");
+        mvaddstr(SPEED_CLASS_2_LABEL_Y , SPEED_CLASS_2_LABEL_X , "Class 2 :");
+        mvaddstr(SPEED_CLASS_4_LABEL_Y , SPEED_CLASS_4_LABEL_X , "Class 4 :");
+        mvaddstr(SPEED_CLASS_6_LABEL_Y , SPEED_CLASS_6_LABEL_X , "Class 6 :");
+        mvaddstr(SPEED_CLASS_10_LABEL_Y, SPEED_CLASS_10_LABEL_X, "Class 10:");
+        mvaddstr(SPEED_U1_LABEL_Y      , SPEED_U1_LABEL_X      , "U1      :");
+        mvaddstr(SPEED_U3_LABEL_Y      , SPEED_U3_LABEL_X      , "U3      :");
+        mvaddstr(SPEED_V6_LABEL_Y      , SPEED_V6_LABEL_X      , "V6      :");
+        mvaddstr(SPEED_V10_LABEL_Y     , SPEED_V10_LABEL_X     , "V10     :");
+        mvaddstr(SPEED_V30_LABEL_Y     , SPEED_V30_LABEL_X     , "V30     :");
+        mvaddstr(SPEED_V60_LABEL_Y     , SPEED_V60_LABEL_X     , "V60     :");
+        mvaddstr(SPEED_V90_LABEL_Y     , SPEED_V90_LABEL_X     , "V90     :");
+        mvaddstr(SPEED_A1_LABEL_Y      , SPEED_A1_LABEL_X      , "A1      :");
+        mvaddstr(SPEED_A2_LABEL_Y      , SPEED_A2_LABEL_X      , "A2      :");
+        attroff(A_BOLD);
+
+        if(device_testing_context->performance_test_info.sequential_write_speed) {
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 2000000) {
+                print_with_color(SPEED_CLASS_2_RESULT_Y, SPEED_CLASS_2_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_CLASS_2_RESULT_Y, SPEED_CLASS_2_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 4000000) {
+                print_with_color(SPEED_CLASS_4_RESULT_Y, SPEED_CLASS_4_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_CLASS_4_RESULT_Y, SPEED_CLASS_4_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 6000000) {
+                print_with_color(SPEED_CLASS_6_RESULT_Y, SPEED_CLASS_6_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V6_RESULT_Y     , SPEED_V6_RESULT_X     , GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_CLASS_6_RESULT_Y, SPEED_CLASS_6_RESULT_X, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V6_RESULT_Y     , SPEED_V6_RESULT_X     , RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 10000000) {
+                print_with_color(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 30000000) {
+                print_with_color(SPEED_U3_RESULT_Y , SPEED_U3_RESULT_X , GREEN_ON_BLACK, "Yes    ");
+                print_with_color(SPEED_V30_RESULT_Y, SPEED_V30_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_U3_RESULT_Y , SPEED_U3_RESULT_X , RED_ON_BLACK, "No     ");
+                print_with_color(SPEED_V30_RESULT_Y, SPEED_V30_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 60000000) {
+                print_with_color(SPEED_V60_RESULT_Y, SPEED_V60_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_V60_RESULT_Y, SPEED_V60_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.sequential_write_speed >= 90000000) {
+                print_with_color(SPEED_V90_RESULT_Y, SPEED_V90_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_V90_RESULT_Y, SPEED_V90_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+        } else {
+            mvaddstr(SPEED_CLASS_2_RESULT_Y , SPEED_CLASS_2_RESULT_X , "Unknown");
+            mvaddstr(SPEED_CLASS_4_RESULT_Y , SPEED_CLASS_4_RESULT_X , "Unknown");
+            mvaddstr(SPEED_CLASS_6_RESULT_Y , SPEED_CLASS_6_RESULT_X , "Unknown");
+            mvaddstr(SPEED_CLASS_10_RESULT_Y, SPEED_CLASS_10_RESULT_X, "Unknown");
+            mvaddstr(SPEED_U1_RESULT_Y      , SPEED_U1_RESULT_X      , "Unknown");
+            mvaddstr(SPEED_U3_RESULT_Y      , SPEED_U3_RESULT_X      , "Unknown");
+            mvaddstr(SPEED_V6_RESULT_Y      , SPEED_V6_RESULT_X      , "Unknown");
+            mvaddstr(SPEED_V10_RESULT_Y     , SPEED_V10_RESULT_X     , "Unknown");
+            mvaddstr(SPEED_V30_RESULT_Y     , SPEED_V30_RESULT_X     , "Unknown");
+            mvaddstr(SPEED_V60_RESULT_Y     , SPEED_V60_RESULT_X     , "Unknown");
+            mvaddstr(SPEED_V90_RESULT_Y     , SPEED_V90_RESULT_X     , "Unknown");
+        }
+
+        if(device_testing_context->performance_test_info.random_read_iops && device_testing_context->performance_test_info.random_write_iops) {
+            if(device_testing_context->performance_test_info.random_read_iops >= 2000 && device_testing_context->performance_test_info.random_write_iops >= 500) {
+                print_with_color(SPEED_A1_RESULT_Y, SPEED_A1_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_A1_RESULT_Y, SPEED_A1_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+
+            if(device_testing_context->performance_test_info.random_read_iops >= 4000 && device_testing_context->performance_test_info.random_write_iops >= 2000) {
+                print_with_color(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, GREEN_ON_BLACK, "Yes    ");
+            } else {
+                print_with_color(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, RED_ON_BLACK, "No     ");
+            }
+        } else {
+            mvaddstr(SPEED_A1_RESULT_Y, SPEED_A1_RESULT_X, "Unknown");
+            mvaddstr(SPEED_A2_RESULT_Y, SPEED_A2_RESULT_X, "Unknown");
+        }
+    }
+}
+
+/**
+ * Redraws the entire display.
+ *
+ * @param device_testing_context  The device whose details will be shown on the
+ *                                screen.
+ */
+void redraw_screen(device_testing_context_type *device_testing_context) {
+    char rate[13];
+    int j;
+
+    if(!program_options.no_curses) {
+        erase();
+
+        box(stdscr, 0, 0);
+
+        // Draw the labels for the bottom of the screen
+        attron(A_BOLD);
+        mvaddstr(PROGRAM_NAME_LABEL_Y          , PROGRAM_NAME_LABEL_X          , PROGRAM_NAME       );
+        mvaddstr(DEVICE_SIZE_LABEL_Y           , DEVICE_SIZE_LABEL_X           , "Device size:"     );
+        mvaddstr(REPORTED_DEVICE_SIZE_LABEL_Y  , REPORTED_DEVICE_SIZE_LABEL_X  , "Reported     :"   );
+        mvaddstr(DETECTED_DEVICE_SIZE_LABEL_Y  , DETECTED_DEVICE_SIZE_LABEL_X  , "Detected     :"   );
+        mvaddstr(IS_FAKE_FLASH_LABEL_Y         , IS_FAKE_FLASH_LABEL_X         , "Is fake flash:"   );
+        mvaddstr(DEVICE_SPEEDS_LABEL_Y         , DEVICE_SPEEDS_LABEL_X         , "Device speeds:"   );
+        mvaddstr(SEQUENTIAL_READ_SPEED_LABEL_Y , SEQUENTIAL_READ_SPEED_LABEL_X , "Sequential read :");
+        mvaddstr(SEQUENTIAL_WRITE_SPEED_LABEL_Y, SEQUENTIAL_WRITE_SPEED_LABEL_X, "Sequential write:");
+        mvaddstr(RANDOM_READ_SPEED_LABEL_Y     , RANDOM_READ_SPEED_LABEL_X     , "Random read     :");
+        mvaddstr(RANDOM_WRITE_SPEED_LABEL_Y    , RANDOM_WRITE_SPEED_LABEL_X    , "Random write    :");
+        mvaddstr(DEVICE_NAME_LABEL_Y           , DEVICE_NAME_LABEL_X           , " Device: "        );
+        mvaddstr(PERCENT_SECTORS_FAILED_LABEL_Y, PERCENT_SECTORS_FAILED_LABEL_X, "% sectors failed:");
+        if(program_options.db_host && program_options.db_user && program_options.db_pass && program_options.db_name) {
+            mvaddstr(SQL_STATUS_LABEL_Y        , SQL_STATUS_LABEL_X            , "SQL status:"      );
+        }
+
+        attroff(A_BOLD);
+
+        // Draw the device name
+        print_device_name(device_testing_context);
+
+        // Draw the color key for the right side of the screen
+        draw_colored_char(COLOR_KEY_BLOCK_SIZE_BLOCK_Y, COLOR_KEY_BLOCK_SIZE_BLOCK_X, BLACK_ON_WHITE, ' ');
+        draw_colored_char(COLOR_KEY_WRITTEN_BLOCK_Y, COLOR_KEY_WRITTEN_BLOCK_X, BLACK_ON_BLUE, ' ');
+        draw_colored_char(COLOR_KEY_WRITTEN_BAD_BLOCK_Y, COLOR_KEY_WRITTEN_BAD_BLOCK_X, BLACK_ON_MAGENTA, ' ');
+        draw_colored_char(COLOR_KEY_VERIFIED_BLOCK_Y, COLOR_KEY_VERIFIED_BLOCK_X, BLACK_ON_GREEN, ' ');
+        draw_colored_char(COLOR_KEY_VERIFIED_BAD_BLOCK_Y, COLOR_KEY_VERIFIED_BAD_BLOCK_X, BLACK_ON_YELLOW, ' ');
+        draw_colored_char(COLOR_KEY_FAILED_BLOCK_Y, COLOR_KEY_FAILED_BLOCK_X, BLACK_ON_RED, ' ');
+        draw_colored_char(COLOR_KEY_FAILED_THIS_ROUND_BLOCK_Y, COLOR_KEY_FAILED_THIS_ROUND_BLOCK_X, BLACK_ON_YELLOW, ACS_DIAMOND);
+
+        mvaddch(COLOR_KEY_WRITTEN_SLASH_Y, COLOR_KEY_WRITTEN_SLASH_X, '/');
+        mvaddch(COLOR_KEY_VERIFIED_SLASH_Y, COLOR_KEY_VERIFIED_SLASH_X, '/');
+        mvaddch(COLOR_KEY_FAILED_SLASH_Y, COLOR_KEY_FAILED_SLASH_X, '/');
+
+        mvaddch (BLOCK_SIZE_LABEL_Y    , BLOCK_SIZE_LABEL_X    , '='                           );
+        mvaddstr(WRITTEN_BLOCK_LABEL_Y , WRITTEN_BLOCK_LABEL_X , "= Written/failed previously" );
+        mvaddstr(VERIFIED_BLOCK_LABEL_Y, VERIFIED_BLOCK_LABEL_X, "= Verified/failed previously");
+        mvaddstr(FAILED_BLOCK_LABEL_Y  , FAILED_BLOCK_LABEL_X  , "= Failed/this round"         );
+
+        if(device_testing_context->endurance_test_info.test_started) {
+            j = snprintf(msg_buffer, sizeof(msg_buffer), " Round %'lu ", device_testing_context->endurance_test_info.rounds_completed + 1);
+            mvaddstr(ROUNDNUM_DISPLAY_Y, ROUNDNUM_DISPLAY_X(j), msg_buffer);
+        }
+
+        if(device_testing_context->endurance_test_info.current_phase == CURRENT_PHASE_WRITING) {
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Writing ");
+        } else if(device_testing_context->endurance_test_info.current_phase == CURRENT_PHASE_READING) {
+            mvaddstr(READWRITE_DISPLAY_Y, READWRITE_DISPLAY_X, " Reading ");
+        }
+
+        // Draw the reported size of the device if it's been determined
+        if(device_testing_context->device_info.logical_size) {
+            snprintf(msg_buffer, 26, "%'lu bytes", device_testing_context->device_info.logical_size);
+            mvprintw(REPORTED_DEVICE_SIZE_DISPLAY_Y, REPORTED_DEVICE_SIZE_DISPLAY_X, "%-25s", msg_buffer);
+        }
+
+        // Draw the detected size of the device if it's been determined
+        if(device_testing_context->device_info.physical_size) {
+            snprintf(msg_buffer, 26, "%'lu bytes", device_testing_context->device_info.physical_size);
+            mvprintw(DETECTED_DEVICE_SIZE_DISPLAY_Y, DETECTED_DEVICE_SIZE_DISPLAY_X, "%-25s", msg_buffer);
+        }
+
+        if(device_testing_context->device_info.is_fake_flash == FAKE_FLASH_YES) {
+            draw_colored_str(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, RED_ON_BLACK, "Yes");
+        } else if(device_testing_context->device_info.is_fake_flash == FAKE_FLASH_NO) {
+            draw_colored_str(IS_FAKE_FLASH_DISPLAY_Y, IS_FAKE_FLASH_DISPLAY_X, GREEN_ON_BLACK, "Probably not");
+        }
+
+        if(sector_display.sectors_per_block) {
+            mvprintw(BLOCK_SIZE_DISPLAY_Y, BLOCK_SIZE_DISPLAY_X, "%'lu bytes", sector_display.sectors_per_block * device_testing_context->device_info.sector_size);
+        }
+
+        if(device_testing_context->performance_test_info.sequential_read_speed) {
+            mvaddstr(SEQUENTIAL_READ_SPEED_DISPLAY_Y, SEQUENTIAL_READ_SPEED_DISPLAY_X, format_rate(device_testing_context->performance_test_info.sequential_read_speed, msg_buffer, 31));
+        }
+
+        if(device_testing_context->performance_test_info.sequential_write_speed) {
+            mvaddstr(SEQUENTIAL_WRITE_SPEED_DISPLAY_Y, SEQUENTIAL_WRITE_SPEED_DISPLAY_X, format_rate(device_testing_context->performance_test_info.sequential_write_speed, msg_buffer, 31));
+        }
+
+        if(device_testing_context->performance_test_info.random_read_iops) {
+            mvprintw(RANDOM_READ_SPEED_DISPLAY_Y, RANDOM_READ_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_testing_context->performance_test_info.random_read_iops,
+                format_rate(device_testing_context->performance_test_info.random_read_iops * 4096, rate, sizeof(rate)));
+        }
+
+        if(device_testing_context->performance_test_info.random_write_iops) {
+            mvprintw(RANDOM_WRITE_SPEED_DISPLAY_Y, RANDOM_WRITE_SPEED_DISPLAY_X, "%0.2f IOPS/s (%s)", device_testing_context->performance_test_info.random_write_iops,
+                format_rate(device_testing_context->performance_test_info.random_write_iops * 4096, rate, sizeof(rate)));
+        }
+
+        print_class_marking_qualifications(device_testing_context);
+        redraw_sector_map(device_testing_context);
+        draw_percentage(device_testing_context);
+        refresh();
+    }
 }
 
 #else
