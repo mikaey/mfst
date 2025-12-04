@@ -16,6 +16,7 @@
 
 #include "crc32.h"
 #include "device.h"
+#include "device_testing_context.h"
 #include "messages.h"
 #include "mfst.h"
 
