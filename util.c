@@ -52,6 +52,3 @@ void multifree(int num_args, ...) {
     va_end(list);
 }
 
-    }
-}
-
