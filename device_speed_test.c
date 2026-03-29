@@ -110,6 +110,8 @@ int probe_device_speeds(device_testing_context_type *device_testing_context) {
 
                     return -1;
                 }
+
+                cur = 0;
             }
 
             secs = 0;
@@ -132,6 +134,22 @@ int probe_device_speeds(device_testing_context_type *device_testing_context) {
                             free(buf);
                             unlock_lockfile(device_testing_context);
                             return -1;
+                        }
+                    } else {
+                        if(cur >= (device_testing_context->device_info.num_physical_sectors * device_testing_context->device_info.sector_size)) {
+                            if(lseek(device_testing_context, 0, SEEK_SET) == -1) {
+                                local_errno = errno;
+
+                                erase_and_delete_window(window);
+
+                                free(buf);
+
+                                lseek_error_during_speed_test(device_testing_context, local_errno);
+
+                                return -1;
+                            }
+
+                            cur = 0;
                         }
                     }
 
@@ -156,6 +174,7 @@ int probe_device_speeds(device_testing_context_type *device_testing_context) {
                         ctr++;
                     } else {
                         ctr += ret;
+                        cur += ret;
                     }
 
                     bytes_left -= ret;
