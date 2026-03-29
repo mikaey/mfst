@@ -800,7 +800,7 @@ uint64_t probe_device_size(device_testing_context_type *device_testing_context) 
 
                         log_log(device_testing_context, NULL, SEVERITY_LEVEL_INFO, MSG_DEVICE_SIZE, device_testing_context->capacity_test_info.device_size);
 
-                        return device_testing_context->capacity_test_info.device_size;
+                        return 0;
                     } else {
                         high = cur + (((i * slice_size) + j) / device_testing_context->device_info.sector_size);
                         i = 4;
