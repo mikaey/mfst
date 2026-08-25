@@ -1105,7 +1105,7 @@ int reset_device(device_testing_context_type *device_testing_context) {
     device_search_params.must_match_preferred_dev_name = 0;
 
     if(find_device(device_testing_context, &device_search_params)) {
-        if(errno == ENOENT) {
+        if(errno == ENODEV) {
             if(!(device_search_result = wait_for_device_reconnect(device_testing_context, &device_search_params))) {
                 log_log(device_testing_context, __func__, SEVERITY_LEVEL_DEBUG, MSG_WAIT_FOR_DEVICE_RECONNECT_ERROR);
                 return -1;
