@@ -137,7 +137,7 @@ int probe_device_speeds(device_testing_context_type *device_testing_context) {
                         }
                     } else {
                         if(cur >= (device_testing_context->device_info.num_physical_sectors * device_testing_context->device_info.sector_size)) {
-                            if(lseek(device_testing_context, 0, SEEK_SET) == -1) {
+                            if(lseek(device_testing_context->device_info.fd, 0, SEEK_SET) == -1) {
                                 local_errno = errno;
 
                                 erase_and_delete_window(window);

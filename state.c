@@ -846,7 +846,7 @@ int load_state(device_testing_context_type *device_testing_context) {
                 if(version >= 2) {
                     for(k = 0; k < buffer_lens[i]; k++) {
                         for(l = 0; l < 4; l++) {
-                            if((k + l) < buffer_lens[i]) {
+                            if(((k * 4) + l) < (detected_size / sector_size)) {
                                 device_testing_context->endurance_test_info.sector_map[(k * 4) + l] = (((buffers[i][k] >> (((3 - l) * 2) + 1)) & 0x01) << 3) | ((buffers[i][k] >> ((3 - l) * 2)) & 0x01);
                             }
                         }
@@ -854,7 +854,7 @@ int load_state(device_testing_context_type *device_testing_context) {
                 } else {
                     for(k = 0; k < buffer_lens[i]; k++) {
                         for(l = 0; l < 8; l++) {
-                            if((k + l) < buffer_lens[i]) {
+                            if(((k * 8) + l) < (detected_size / sector_size)) {
                                 device_testing_context->endurance_test_info.sector_map[(k * 8) + l] = (buffers[i][k] >> (7 - l)) & 0x01;
                             }
                         }
