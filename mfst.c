@@ -2486,7 +2486,7 @@ void save_state_error(device_testing_context_type *device_testing_context) {
  * @returns Non-zero if the given byte position falls within the device's
  *          beginning-of-device area, or zero if it does not.
  */
-inline int was_bod_area_affected(device_testing_context_type *device_testing_context, uint64_t starting_byte) {
+static inline int was_bod_area_affected(device_testing_context_type *device_testing_context, uint64_t starting_byte) {
     return starting_byte < device_testing_context->device_info.bod_mod_buffer_size;
 }
 
@@ -2503,7 +2503,7 @@ inline int was_bod_area_affected(device_testing_context_type *device_testing_con
  * @returns Non-zero if the given byte range intersects the device's
  *          middle-of-device area, or zero if it does not.
  */
-inline int was_mod_area_affected(device_testing_context_type *device_testing_context, uint64_t starting_byte, uint64_t ending_byte) {
+static inline int was_mod_area_affected(device_testing_context_type *device_testing_context, uint64_t starting_byte, uint64_t ending_byte) {
     return (starting_byte >= device_testing_context->device_info.middle_of_device && starting_byte < (device_testing_context->device_info.middle_of_device + device_testing_context->device_info.bod_mod_buffer_size)) || (ending_byte >= device_testing_context->device_info.middle_of_device && ending_byte < (device_testing_context->device_info.middle_of_device + device_testing_context->device_info.bod_mod_buffer_size));
 }
 
