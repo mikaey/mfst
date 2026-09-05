@@ -1,0 +1,20 @@
+# Object and dependency files
+*.o
+.deps/
+
+# Autotools build artifacts
+/Makefile
+/autom4te.cache/
+/config.h
+/config.log
+/config.status
+/stamp-h1
+
+# Executables
+/mfst
+
+# Backup and swap files
+*~
+*.bak
+*.swp
+*.swo
