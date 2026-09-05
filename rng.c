@@ -27,9 +27,9 @@ int32_t rng_get_random_number(device_testing_context_type *device_testing_contex
     return result;
 }
 
-void rng_fill_buffer(device_testing_context_type *device_testing_context, char *buffer, uint64_t size) {
+void rng_fill_buffer(device_testing_context_type *device_testing_context, char *buffer, size_t size) {
     int32_t *int_buffer = (int32_t *) buffer;
-    uint64_t i;
+    size_t i;
     for(i = 0; i < (size / 4); i++) {
         int_buffer[i] = rng_get_random_number(device_testing_context);
     }
